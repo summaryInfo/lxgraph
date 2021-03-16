@@ -1,0 +1,51 @@
+/* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
+
+#ifndef UTIL_H_
+#define UTIL_H_ 1
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define SWAP(a, b) do{__typeof__(a) t__ = (a); (a) = (b); (b) = t__;}while(0)
+
+#define PROG_NAME "lxgraph"
+
+/* Logging */
+
+void info(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+void warn(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+_Noreturn void die(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+
+/* Configuration */
+
+struct config {
+    int32_t log_level;
+    char *config_path;
+};
+
+extern struct config config;
+
+enum option {
+    o_log_level,
+    o_config,
+    o_MAX
+};
+
+bool set_option(const char *name, const char *value);
+const char *usage_string(size_t i);
+
+/* File utils */
+
+struct mapping {
+    char *addr;
+    size_t size;
+};
+
+struct mapping map_file(const char *path);
+void unmap_file(struct mapping map);
+
+#endif
+
