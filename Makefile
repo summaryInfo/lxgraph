@@ -43,6 +43,6 @@ $(NAME): $(OBJ)
 
 main.o: util.h
 uri.o: util.h hashtable.h
-callgraph.o: util.h hashtable.h
+callgraph.o: util.h hashtable.h callgraph.h
 
 .PHONY: all clean install install-strip uninstall force

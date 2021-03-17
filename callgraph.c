@@ -1,30 +1,33 @@
 
 #include "util.h"
 #include "hashtable.h"
+#include "callgraph.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <clang-c/Index.h>
 
-
 struct strtab_item {
     ht_head_t head;
     const char *name;
 };
 
-typedef struct strtab_item *literal;
-
-bool strtab_item_cmp(const ht_head_t *a, const ht_head_t *b) {
+static bool strtab_item_cmp(const ht_head_t *a, const ht_head_t *b) {
     const struct strtab_item *ai = (const struct strtab_item *)a;
     const struct strtab_item *bi = (const struct strtab_item *)b;
     return !strcmp(ai->name, bi->name);
 }
 
-literal strtab_put(struct hashtable *ht, const char *str) {
+const char *strtab_get(struct callgraph *cg, literal lit) {
+    (void)cg;
+    return lit->name;
+}
+
+literal strtab_put(struct callgraph *cg, const char *str) {
     size_t len = strlen(str);
     struct strtab_item key = { .head = { .hash = hash64(str, len) }, .name = str };
-    ht_head_t **h = ht_lookup_ptr(ht, (ht_head_t *)&key);
+    ht_head_t **h = ht_lookup_ptr(&cg->strtab, (ht_head_t *)&key);
     if (*h) return (literal)*h;
 
     struct strtab_item *new = malloc(sizeof *new + len + 1);
@@ -33,34 +36,14 @@ literal strtab_put(struct hashtable *ht, const char *str) {
     new->name = (char *)(new + 1);
     strcpy((char *)new->name, str);
 
-    ht_insert_hint(ht, h, (ht_head_t *)new);
+    ht_insert_hint(&cg->strtab, h, (ht_head_t *)new);
     return (literal)new;
 }
 
-struct callgraph {
-    literal function;
-    literal file;
-    struct hashtable strtab;
-
-    struct invokation {
-        literal caller;
-        literal callee;
-    } *calls;
-    size_t calls_caps;
-    size_t calls_size;
-
-    struct definition {
-        literal file;
-        literal name;
-    } *defs;
-    size_t defs_caps;
-    size_t defs_size;
-};
-
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function); // No nested functions allowed
-    cg->function = strtab_put(&cg->strtab, fun);
-    cg->file = strtab_put(&cg->strtab, file);
+    cg->function = strtab_put(cg, fun);
+    cg->file = strtab_put(cg, file);
 }
 
 inline static void add_function_definition(struct callgraph *cg, literal id) {
@@ -70,7 +53,7 @@ inline static void add_function_definition(struct callgraph *cg, literal id) {
 }
 
 inline static void add_function_call(struct callgraph *cg, const char *str) {
-    literal id = strtab_put(&cg->strtab, str);
+    literal id = strtab_put(cg, str);
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
         // TODO Calls outside functions?
         cg->calls[cg->calls_size++] = (struct invokation) { cg->function, id };
@@ -134,8 +117,20 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
     return CXChildVisit_Continue;
 }
 
-struct callgraph *parse_file(const char *path) {
-    struct callgraph *cg = calloc(1, sizeof *cg);
+void free_callgraph(struct callgraph *cg) {
+    ht_iter_t it = ht_begin(&cg->strtab);
+    while (ht_current(&it))
+        free(ht_erase_current(&it));
+    ht_free(&cg->strtab);
+    free(cg->defs);
+    free(cg->calls);
+}
+
+struct callgraph *parse_file(struct callgraph *cg, const char *path) {
+    if (!cg) {
+        cg = calloc(1, sizeof *cg);
+        ht_init(&cg->strtab, HT_INIT_CAPS, strtab_item_cmp);
+    }
     
     // TODO Optimize: dont create index on every file
     CXIndex index = clang_createIndex(0, 0);
@@ -143,11 +138,10 @@ struct callgraph *parse_file(const char *path) {
     if (!unit) {
         warn("Cannot parse file '%s'", path);
         clang_disposeIndex(index);
-        free(cg);
+        free_callgraph(cg);
         return NULL;
     }
 
-    ht_init(&cg->strtab, HT_INIT_CAPS, strtab_item_cmp);
     assert(cg->strtab.data);
     CXCursor cur = clang_getTranslationUnitCursor(unit);
     clang_visitChildren(cur, visit, NULL);
