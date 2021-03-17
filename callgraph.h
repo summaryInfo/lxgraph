@@ -27,7 +27,7 @@ struct callgraph {
 };
 
 void free_callgraph(struct callgraph *cg);
-struct callgraph *parse_file(struct callgraph *cg, const char *path);
+struct callgraph *parse_directory(const char *path);
 literal strtab_put(struct callgraph *cg, const char *str);
 const char *strtab_get(struct callgraph *cg, literal literal);
 

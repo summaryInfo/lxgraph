@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define CACHE_LINE 64
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define SWAP(a, b) do{__typeof__(a) t__ = (a); (a) = (b); (b) = t__;}while(0)
