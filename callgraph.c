@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 
@@ -45,8 +46,8 @@ literal strtab_put(struct callgraph *cg, const char *str) {
 }
 
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
-    assert(!cg->function); // No nested functions allowed
-    cg->function = strtab_put(cg, fun);
+    assert(!cg->function || !fun); // No nested functions allowed
+    cg->function = fun ? strtab_put(cg, fun) : NULL;
     cg->file = strtab_put(cg, file);
 }
 
@@ -136,7 +137,7 @@ static void do_parse(void *varg) {
     assert(cg->strtab.data);
     *arg->pres = cg;
 
-    CXIndex index = clang_createIndex(0, 0);
+    CXIndex index = clang_createIndex(1, 1);
 
     for (size_t i = arg->offset; i < arg->offset + arg->size; i++) {
         CXCompileCommand cmd = clang_CompileCommands_getCommand(arg->cmds, i);
@@ -158,7 +159,7 @@ static void do_parse(void *varg) {
         }
 
         CXCursor cur = clang_getTranslationUnitCursor(unit);
-        clang_visitChildren(cur, visit, NULL);
+        clang_visitChildren(cur, visit, (CXClientData)cg);
         clang_disposeTranslationUnit(unit);
     }
 
@@ -256,7 +257,13 @@ struct callgraph *parse_directory(const char *path) {
         return NULL;
     }
 
+    char buf[PATH_MAX + 1];
+    char *res = getcwd(buf, sizeof buf -1);
     CXCompileCommands ccmds = clang_CompilationDatabase_getAllCompileCommands(cdb);
+
+    /* Parsing should be performed
+     * in project directory so chdir() temporaly */
+    chdir(path);
 
     ssize_t ncmds = clang_CompileCommands_getSize(ccmds);
     ssize_t cmds_per_worker = ncmds/nproc, tail = ncmds%nproc;
@@ -278,5 +285,6 @@ struct callgraph *parse_directory(const char *path) {
 
     clang_CompileCommands_dispose(ccmds);
     clang_CompilationDatabase_dispose(cdb);
+    if (res) chdir(buf);
     return cgparts[0];
 }
