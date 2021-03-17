@@ -23,8 +23,11 @@ _Noreturn void die(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)))
 /* Configuration */
 
 struct config {
-    int32_t log_level;
     char *config_path;
+    char *output_path;
+    char *build_dir;
+    int32_t log_level;
+    int32_t nthreads;
 };
 
 extern struct config config;
@@ -32,6 +35,9 @@ extern struct config config;
 enum option {
     o_log_level,
     o_config,
+    o_out,
+    o_path,
+    o_threads,
     o_MAX
 };
 

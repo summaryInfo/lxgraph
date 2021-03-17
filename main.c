@@ -66,7 +66,11 @@ static void parse_options(char **argv) {
             default:;
                 opt = NULL;
                 switch (letter) {
+                case 'C': opt = SKIP_OPT; break;
                 case 'L': opt = "log-level"; break;
+                case 'T': opt = "threads"; break;
+                case 'o': opt = "out"; break;
+                case 'p': opt = "path"; break;
                 }
 
                 if (opt) {

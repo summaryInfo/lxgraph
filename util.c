@@ -24,9 +24,12 @@
 static struct options {
     const char *name;
     const char *desc;
-} options[] = {
-    {"log-level", ", -L<value>\t(Verbositiy of output, 0-3)" },
-    {"config", ", -C<value>\t(Configuration file path)" },
+} options[o_MAX] = {
+    [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-3)" },
+    [o_config] = {"config", ", -C<value>\t(Configuration file path)" },
+    [o_out] = {"out", ", -o<value>\t(Output file path)"},
+    [o_path] = {"path", ", -p<value>\t(Build directory path)"},
+    [o_threads] = {"threads", ", -T<value>\t(Number of threads to use, default is number of cores + 1)"},
 };
 
 struct config config;
@@ -141,13 +144,23 @@ static void parse_str(char **dst, const char *str, const char *dflt) {
 }
 
 bool set_option(const char *name, const char *value) {
+    int64_t v;
     if (!strcmp(options[o_log_level].name, name)) {
-        int64_t v;
         if (!parse_int(value, &v, 0, 3, 3)) goto e_value;
         config.log_level = v;
         return true;
     } else if (!strcmp(options[o_config].name, name)) {
         parse_str(&config.config_path, value, NULL);
+        return true;
+    } else if (!strcmp(options[o_path].name, name)) {
+        parse_str(&config.build_dir, value, NULL);
+        return true;
+    } else if (!strcmp(options[o_out].name, name)) {
+        parse_str(&config.output_path, value, NULL);
+        return true;
+    } else if (!strcmp(options[o_threads].name, name)) {
+        if (!parse_int(value, &v, 1, 32, 0)) goto e_value;
+        config.nthreads = v;
         return true;
     }
 
@@ -231,7 +244,7 @@ static void parse_config(void) {
         }
     }
 
-    if (!cfg.addr) die("Cannot find config file anywhere");
+    //if (!cfg.addr) die("Cannot find config file anywhere");
 
     char *ptr = cfg.addr, *end = cfg.addr + cfg.size;
     char saved1 = '\0', saved2 = '\0';
