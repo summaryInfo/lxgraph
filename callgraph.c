@@ -15,6 +15,7 @@
 
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function || !fun); // No nested functions allowed
+    if (!strncmp(file, "./", 2)) file += 2;
     cg->function = fun ? strtab_put(&cg->strtab, fun) : NULL;
     cg->file = strtab_put(&cg->strtab, file);
 }
