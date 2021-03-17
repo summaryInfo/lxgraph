@@ -280,9 +280,19 @@ static void parse_config(void) {
             while (ptr < end && isblank((unsigned)*ptr)) ptr++;
             value_start = ptr;
 
-            while (ptr < end && *ptr != '\n') ptr++;
-            while (ptr > value_start && isblank((unsigned)ptr[-1])) ptr--;
-            value_end = ptr;
+            if (*ptr == '"') /* quoted value */ {
+                ptr++;
+                while (ptr < end && *ptr != '"') ptr++;
+                value_end = ptr;
+                while (ptr < end && isblank((unsigned)*ptr)) ptr++;
+                if (*ptr == '#')
+                    while (ptr < end && *ptr != '\n') ptr++;
+                if (*ptr != '\n') goto e_wrong_line;
+            } else /* unquoted value */ {
+                while (ptr < end && *ptr != '\n') ptr++;
+                while (ptr > value_start && isblank((unsigned)ptr[-1])) ptr--;
+                value_end = ptr;
+            }
 
             SWAP(*value_end, saved1);
             SWAP(*name_end, saved2);
