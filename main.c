@@ -1,6 +1,8 @@
 /* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
 
+#include "callgraph.h"
 #include "util.h"
+#include "worker.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
@@ -108,8 +110,22 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Parse config file */
     init_config(cpath);
+    /* Parse command line options after config
+     * since argv have bigger priority than config file */
     parse_options(argv);
 
+    /* Initiallize worker threads pool */
+    init_workers();
+
+    struct callgraph *cg = parse_directory(config.build_dir);
+    assert(cg);
+
+    dump_dot(cg, config.output_path);
+    free_callgraph(cg);
+
+    fini_workers(1);
+    fini_config();
     return EXIT_SUCCESS;
 }

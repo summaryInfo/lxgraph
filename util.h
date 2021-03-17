@@ -44,6 +44,7 @@ enum option {
 bool set_option(const char *name, const char *value);
 const char *usage_string(size_t i);
 void init_config(const char *path);
+void fini_config(void);
 
 /* File utils */
 

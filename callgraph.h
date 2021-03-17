@@ -33,5 +33,8 @@ struct callgraph *parse_directory(const char *path);
 literal strtab_put(struct callgraph *cg, const char *str);
 const char *strtab_get(struct callgraph *cg, literal literal);
 
+
+void dump_dot(struct callgraph *cg, const char *destpath);
+
 #endif
 

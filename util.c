@@ -150,13 +150,13 @@ bool set_option(const char *name, const char *value) {
         config.log_level = v;
         return true;
     } else if (!strcmp(options[o_config].name, name)) {
-        parse_str(&config.config_path, value, NULL);
+        parse_str(&config.config_path, value, PROG_NAME".conf");
         return true;
     } else if (!strcmp(options[o_path].name, name)) {
-        parse_str(&config.build_dir, value, NULL);
+        parse_str(&config.build_dir, value, ".");
         return true;
     } else if (!strcmp(options[o_out].name, name)) {
-        parse_str(&config.output_path, value, NULL);
+        parse_str(&config.output_path, value, "graph.dot");
         return true;
     } else if (!strcmp(options[o_threads].name, name)) {
         if (!parse_int(value, &v, 1, 32, 0)) goto e_value;
@@ -300,4 +300,11 @@ void init_config(const char *path) {
 
     if (path) set_option(options[o_config].name, path);
     parse_config();
+}
+
+void fini_config(void) {
+    free(config.config_path);
+    free(config.output_path);
+    free(config.build_dir);
+    memset(&config, 0, sizeof config);
 }
