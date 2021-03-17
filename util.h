@@ -47,6 +47,7 @@ struct mapping {
 
 struct mapping map_file(const char *path);
 void unmap_file(struct mapping map);
+bool adjust_buffer(void **buf, size_t *caps, size_t size, size_t elem);
 
 #endif
 

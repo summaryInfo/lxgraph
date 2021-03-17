@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "util.h"
+#include "hashtable.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -62,6 +63,42 @@ void info(const char *fmt, ...) {
         fputc('\n', stderr);
         va_end(args);
     }
+}
+
+#define CAPS_STEP(x) ((x)?4*(x)/3:8)
+
+bool adjust_buffer(void **buf, size_t *caps, size_t size, size_t elem) {
+    if (size > *caps) {
+        void *tmp = realloc(*buf, elem * MAX(CAPS_STEP(*caps), size));
+        if (!tmp) return 0;
+        *buf = tmp;
+        *caps = CAPS_STEP(*caps);
+    }
+    return 1;
+}
+
+#define HT_LOAD_FACTOR(x) (4*(x)/3)
+#define HT_CAPS_STEP(x) (3*(x)/2)
+
+bool ht_adjust(struct hashtable *ht, intptr_t inc) {
+    ht->size += inc;
+
+    if (HT_LOAD_FACTOR(ht->size) > ht->caps) {
+        struct hashtable tmp = {
+            .cmpfn = ht->cmpfn,
+            .caps = HT_CAPS_STEP(ht->caps),
+            .data = calloc(HT_CAPS_STEP(ht->caps), sizeof(*ht->data)),
+        };
+        if (!tmp.data) return 0;
+
+        ht_iter_t it = ht_begin(ht);
+        while(ht_current(&it))
+            ht_insert(&tmp, ht_erase_current(&it));
+        free(ht->data);
+        *ht = tmp;
+    }
+
+    return 1;
 }
 
 #if 0
