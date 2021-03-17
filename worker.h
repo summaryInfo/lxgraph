@@ -1,4 +1,4 @@
-/* Copyright (c) 2019-2021, Evgeny Baskov. All rights reserved */
+/* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
 
 #ifndef WORKER_H_
 #define WORKER_H_ 1

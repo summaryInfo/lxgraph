@@ -1,3 +1,5 @@
+/* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
+
 #ifndef CALLGRAPH_H_
 #define CALLGRAPH_H_ 1
 

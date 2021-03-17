@@ -1,3 +1,4 @@
+/* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
 
 #include "util.h"
 #include "hashtable.h"
