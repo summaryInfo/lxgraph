@@ -3,10 +3,9 @@
 #ifndef CALLGRAPH_H_
 #define CALLGRAPH_H_ 1
 
-#include "hashtable.h"
-#include "stddef.h"
+#include "literal.h"
 
-typedef struct strtab_item *literal;
+#include <stddef.h>
 
 struct callgraph {
     literal function;
@@ -20,19 +19,13 @@ struct callgraph {
     size_t calls_caps;
     size_t calls_size;
 
-    struct definition {
-        literal file;
-        literal name;
-    } *defs;
+    literal *defs;
     size_t defs_caps;
     size_t defs_size;
 };
 
 void free_callgraph(struct callgraph *cg);
 struct callgraph *parse_directory(const char *path);
-literal strtab_put(struct callgraph *cg, const char *str);
-const char *strtab_get(struct callgraph *cg, literal literal);
-
 
 void dump_dot(struct callgraph *cg, const char *destpath);
 

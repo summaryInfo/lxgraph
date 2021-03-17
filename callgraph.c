@@ -13,65 +13,30 @@
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 
-struct strtab_item {
-    ht_head_t head;
-    const char *name;
-};
-
-static bool strtab_item_cmp(const ht_head_t *a, const ht_head_t *b) {
-    const struct strtab_item *ai = (const struct strtab_item *)a;
-    const struct strtab_item *bi = (const struct strtab_item *)b;
-    return !strcmp(ai->name, bi->name);
-}
-
-const char *strtab_get(struct callgraph *cg, literal lit) {
-    (void)cg;
-    return lit->name;
-}
-
-literal strtab_put(struct callgraph *cg, const char *str) {
-    size_t len = strlen(str);
-    struct strtab_item key = { .head = { .hash = hash64(str, len) }, .name = str };
-    ht_head_t **h = ht_lookup_ptr(&cg->strtab, (ht_head_t *)&key);
-    if (*h) return (literal)*h;
-
-    struct strtab_item *new = malloc(sizeof *new + len + 1);
-    assert(new);
-    new->head = key.head;
-    new->name = (char *)(new + 1);
-    strcpy((char *)new->name, str);
-
-    ht_insert_hint(&cg->strtab, h, (ht_head_t *)new);
-    return (literal)new;
-}
-
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function || !fun); // No nested functions allowed
-    cg->function = fun ? strtab_put(cg, fun) : NULL;
-    cg->file = strtab_put(cg, file);
+    cg->function = fun ? strtab_put(&cg->strtab, fun) : NULL;
+    cg->file = strtab_put(&cg->strtab, file);
 }
 
 inline static void add_function_declaration(struct callgraph *cg, literal id) {
     if (adjust_buffer((void **)&cg->defs, &cg->defs_caps, cg->defs_size + 1, sizeof *cg->defs)) {
-        // TODO Store source location
-        cg->defs[cg->defs_size++] = (struct definition) { .name = id };
+        cg->defs[cg->defs_size++] = id;
     }
 }
 
 inline static void add_function_call(struct callgraph *cg, const char *str) {
-    literal id = strtab_put(cg, str), fn = cg->function;
+    literal id = strtab_put(&cg->strtab, str), fn = cg->function;
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
-        // TODO Store source location
-        if (!fn) fn = strtab_put(cg, "<static expr>");
+        if (!fn) fn = strtab_put(&cg->strtab, "<static expr>");
         cg->calls[cg->calls_size++] = (struct invokation) { fn, id };
     }
 }
 
 inline static void mark_as_definition(struct callgraph *cg, literal func) {
-    struct definition *def = &cg->defs[cg->defs_size - 1];
-    assert(def->name == func);
-    assert(!def->file || def->file == cg->file);
-    def->file = cg->file;
+    literal def = cg->defs[cg->defs_size - 1];
+    assert(def == func);
+    literal_set_file(func, cg->file);
 }
 
 static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData data) {
@@ -87,14 +52,17 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
     case CXCursor_CXXMethod:
     case CXCursor_FunctionTemplate:;
         CXString name = clang_getCursorDisplayName(cur);
-        CXString tu = clang_getTranslationUnitSpelling(clang_Cursor_getTranslationUnit(cur));
-        set_current(cg, clang_getCString(name), clang_getCString(name));
+        CXFile file;
+        // TODO Store line/column
+        clang_getExpansionLocation(clang_getCursorLocation(cur), &file, NULL, NULL, NULL);
+        CXString filename = clang_getFileName(file);
+        set_current(cg, clang_getCString(name), clang_getCString(filename));
         add_function_declaration(cg, cg->function);
         clang_visitChildren(cur, visit, data);
-        set_current(cg, NULL, clang_getCString(tu));
+        set_current(cg, NULL, clang_getCString(filename));
         clang_disposeString(name);
-        clang_disposeString(tu);
-        break;
+        clang_disposeString(filename);
+        return CXChildVisit_Continue;
     case CXCursor_DeclRefExpr:
     case CXCursor_MemberRefExpr:;
         CXCursor decl = clang_getCursorReferenced(cur);
@@ -133,8 +101,7 @@ struct arg {
 static void do_parse(void *varg) {
     struct arg *arg = varg;
     struct callgraph *cg = calloc(1, sizeof *cg);
-    ht_init(&cg->strtab, HT_INIT_CAPS, strtab_item_cmp);
-    assert(cg->strtab.data);
+    init_strtab(&cg->strtab);
     *arg->pres = cg;
 
     CXIndex index = clang_createIndex(1, config.log_level > 1);
@@ -167,37 +134,41 @@ static void do_parse(void *varg) {
 }
 
 static int cmp_def(const void *a, const void *b) {
-    const struct definition *da = (const struct definition *)a;
-    const struct definition *db = (const struct definition *)b;
-    if (da->file < db->file) return -1;
-    if (da->file > db->file) return 1;
-    if (da->name < db->name) return -1;
-    if (da->name > db->name) return 1;
-    return 0;
+    literal da = *(literal *)a, db = *(literal *)b;
+    literal fa = literal_get_file(da), fb = literal_get_file(db);
+    // May be I should sort by actual string to make locations persistent?
+    if (fa < fb) return -1;
+    else if (fa > fb) return 1;
+    if (da < db) return -1;
+    return (da > db);
 }
 
 static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
     /* Move string table */
+
+    strtab_merge(&dst->strtab, &src->strtab);
     ht_iter_t it = ht_begin(&src->strtab);
     while (ht_current(&it)) {
         literal cur = (literal)ht_erase_current(&it);
-        literal old = (literal)ht_insert(&dst->strtab, (ht_head_t *)cur);
-        if (old) /* Need to replace references to the duplicate string */ {
-            for (size_t i = 0; i < src->calls_size; i++) {
-                if (src->calls[i].callee == cur)
-                    src->calls[i].callee = old;
-                if (src->calls[i].caller == cur)
-                    src->calls[i].caller = old;
-            }
-            for (size_t i = 0; i < src->defs_size; i++) {
-                if (src->defs[i].name == cur)
-                    src->defs[i].name = old;
-                if (src->defs[i].file == cur)
-                    src->defs[i].file = old;
-            }
-            free(cur);
+        literal old = literal_get_file(cur);
+
+        for (size_t i = 0; i < src->calls_size; i++) {
+            if (src->calls[i].callee == cur)
+                src->calls[i].callee = old;
+            if (src->calls[i].caller == cur)
+                src->calls[i].caller = old;
         }
+        for (size_t i = 0; i < src->defs_size; i++) {
+            if (src->defs[i] == cur)
+                src->defs[i] = old;
+        }
+        free(cur);
     }
+
+    dst->file = NULL;
+    dst->function = NULL;
+    src->file = NULL;
+    src->function = NULL;
 
     /* Merge calls vector (just append it) */
 
@@ -218,7 +189,6 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         dst->defs_size = src->defs_size;
         dst->defs_caps = src->defs_caps;
     } else {
-        /* O(n) copy */
         res = adjust_buffer((void **)&dst->defs, &dst->defs_caps,
                                  dst->defs_size + src->defs_size, sizeof *dst->defs);
         assert(res);
@@ -230,16 +200,13 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         qsort(dst->defs, dst->defs_size, sizeof *dst->defs, cmp_def);
 
         /* O(n) deduplication */
-        struct definition *ddef = dst->defs, *sdef, *enddef = dst->defs + dst->defs_size;
+        literal *ddef = dst->defs, *sdef, *enddef = dst->defs + dst->defs_size;
         for (sdef = ddef + 1; sdef < enddef; sdef++) {
-            if (ddef->name == sdef->name) {
-                /* all functions are globally unique (I might be wrong here...) */
-                assert(!ddef->file || !sdef->file || ddef->file == sdef->file);
-                if (!ddef->file) ddef->file = sdef->file;
-            } else {
-                *++ddef = *sdef;
-            }
+            if (!literal_eq(*ddef, *sdef)) *++ddef = *sdef;
+            else if (!literal_get_file(*ddef))
+                literal_set_file(*ddef, literal_get_file(*sdef));
         }
+
         dst->defs_size = ddef - dst->defs + 1;
     }
     src->defs_caps = 0;
@@ -281,6 +248,11 @@ struct callgraph *parse_directory(const char *path) {
     for (ssize_t i = 1; i < nproc; i++) {
         merge_move_callgraph(cgparts[0], cgparts[i]);
         free_callgraph(cgparts[i]);
+    }
+
+    if (nproc == 1) {
+        qsort(cgparts[0]->defs, cgparts[0]->defs_size,
+              sizeof *cgparts[0]->defs, cmp_def);
     }
 
     clang_CompileCommands_dispose(ccmds);
