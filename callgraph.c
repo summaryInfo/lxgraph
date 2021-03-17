@@ -46,75 +46,66 @@ inline static void set_current(struct callgraph *cg, const char *fun, const char
     cg->file = strtab_put(cg, file);
 }
 
-inline static void add_function_definition(struct callgraph *cg, literal id) {
+inline static void add_function_declaration(struct callgraph *cg, literal id) {
     if (adjust_buffer((void **)&cg->defs, &cg->defs_caps, cg->defs_size + 1, sizeof *cg->defs)) {
-        cg->defs[cg->defs_size++] = (struct definition) { cg->file, id };
+        // TODO Store source location
+        cg->defs[cg->defs_size++] = (struct definition) { .name = id };
     }
 }
 
 inline static void add_function_call(struct callgraph *cg, const char *str) {
-    literal id = strtab_put(cg, str);
+    literal id = strtab_put(cg, str), fn = cg->function;
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
-        // TODO Calls outside functions?
-        cg->calls[cg->calls_size++] = (struct invokation) { cg->function, id };
+        // TODO Store source location
+        if (!fn) fn = strtab_put(cg, "<static expr>");
+        cg->calls[cg->calls_size++] = (struct invokation) { fn, id };
     }
+}
+
+inline static void mark_as_definition(struct callgraph *cg, literal func) {
+    struct definition *def = &cg->defs[cg->defs_size - 1];
+    assert(def->name == func);
+    assert(!def->file || def->file == cg->file);
+    def->file = cg->file;
 }
 
 static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData data) {
     struct callgraph *cg = (struct callgraph *)data;
-
     (void)parent;
 
-    enum CXCursorKind kind = clang_getCursorKind(cur);
-    switch (kind) {
-    case CXCursor_BlockExpr:
-    case CXCursor_ParenExpr:
-    case CXCursor_UnaryOperator:
-    case CXCursor_ArraySubscriptExpr:
-    case CXCursor_BinaryOperator:
-    case CXCursor_CompoundAssignOperator:
-    case CXCursor_ConditionalOperator:
-    case CXCursor_CStyleCastExpr:
-    case CXCursor_CompoundLiteralExpr:
-    case CXCursor_InitListExpr:
-    case CXCursor_StmtExpr:
-    case CXCursor_GenericSelectionExpr:
-    case CXCursor_UnaryExpr:
+    switch (clang_getCursorKind(cur)) {
     case CXCursor_CompoundStmt:
-    case CXCursor_CaseStmt:
-    case CXCursor_DefaultStmt:
-    case CXCursor_IfStmt:
-    case CXCursor_SwitchStmt:
-    case CXCursor_WhileStmt:
-    case CXCursor_DoStmt:
-    case CXCursor_ForStmt:
-    case CXCursor_ReturnStmt:
-    case CXCursor_VarDecl:
-    case CXCursor_CallExpr:
-        return CXChildVisit_Recurse;
-    case CXCursor_FunctionDecl:;
+        if (cg->function)
+            mark_as_definition(cg, cg->function);
+        break;
+    case CXCursor_FunctionDecl:
+    case CXCursor_CXXMethod:
+    case CXCursor_FunctionTemplate:;
         CXString name = clang_getCursorDisplayName(cur);
         CXString tu = clang_getTranslationUnitSpelling(clang_Cursor_getTranslationUnit(cur));
         set_current(cg, clang_getCString(name), clang_getCString(name));
-        // TODO Declaration or definition?
-        add_function_definition(cg, cg->function);
+        add_function_declaration(cg, cg->function);
         clang_visitChildren(cur, visit, data);
         set_current(cg, NULL, clang_getCString(tu));
         clang_disposeString(name);
         clang_disposeString(tu);
         break;
-    case CXCursor_DeclRefExpr:;
+    case CXCursor_DeclRefExpr:
+    case CXCursor_MemberRefExpr:;
         CXCursor decl = clang_getCursorReferenced(cur);
-        if (clang_getCursorKind(decl) == CXCursor_FunctionDecl) {
+        enum CXCursorKind kind = clang_getCursorKind(decl);
+        if (kind == CXCursor_FunctionDecl ||
+                kind == CXCursor_CXXMethod ||
+                kind == CXCursor_FunctionTemplate) {
             CXString fname = clang_getCursorDisplayName(decl);
             add_function_call(cg, clang_getCString(fname));
             clang_disposeString(fname);
         }
-        break;
+        /* fallthrough */
     default:
         break;
     }
-    return CXChildVisit_Continue;
+    return CXChildVisit_Recurse;
 }
 
 void free_callgraph(struct callgraph *cg) {
