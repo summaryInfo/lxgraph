@@ -18,7 +18,28 @@ void remove_unused(struct callgraph *cg) {
         if (*literal_get_pdata(*src))
             *dst++ = *src;
     }
-    cg->defs_size = end - dst;
+    cg->defs_size = dst - cg->defs;
+}
+
+static int cmp_call(const void *a, const void *b) {
+    const struct invokation *ia = (const struct invokation *)a;
+    const struct invokation *ib = (const struct invokation *)b;
+    if (ia->caller < ib->caller) return -1;
+    if (ia->caller > ib->caller) return 1;
+    if (ia->callee < ib->callee) return -1;
+    return (ia->callee > ib->callee);
+}
+
+void colapse_duplicates(struct callgraph *cg) {
+    qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
+    struct invokation *dst = cg->calls, *src = cg->calls + 1;
+    struct invokation *end = dst + cg->calls_size;
+    for (; src < end; src++) {
+        // TODO Increase weight of duplicate node
+        if (dst->callee != src->callee || dst->caller != src->caller)
+            *++dst = *src;
+    }
+    cg->calls_size = dst - cg->calls + 1;
 }
 
 void dump_dot(struct callgraph *cg, const char *destpath) {
@@ -29,6 +50,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     }
 
     remove_unused(cg);
+    colapse_duplicates(cg);
 
     fputs("digraph \"callgraph\" {\n", dst);
     fprintf(dst, "\tlayout = \"circo\";\n");
