@@ -8,5 +8,10 @@
 *.gcda
 perf.data*
 
+# Ignore generated data
+*.dot
+*.svg
+*.json
+
 # Binaries (with default names)
 lxgraph
