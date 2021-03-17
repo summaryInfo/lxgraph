@@ -137,7 +137,7 @@ static void do_parse(void *varg) {
     assert(cg->strtab.data);
     *arg->pres = cg;
 
-    CXIndex index = clang_createIndex(1, 1);
+    CXIndex index = clang_createIndex(1, config.log_level > 1);
 
     for (size_t i = arg->offset; i < arg->offset + arg->size; i++) {
         CXCompileCommand cmd = clang_CompileCommands_getCommand(arg->cmds, i);

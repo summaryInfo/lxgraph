@@ -25,7 +25,7 @@ static struct options {
     const char *name;
     const char *desc;
 } options[o_MAX] = {
-    [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-3)" },
+    [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-4)" },
     [o_config] = {"config", ", -C<value>\t(Configuration file path)" },
     [o_out] = {"out", ", -o<value>\t(Output file path)"},
     [o_path] = {"path", ", -p<value>\t(Build directory path)"},
@@ -62,6 +62,17 @@ void info(const char *fmt, ...) {
         va_list args;
         va_start(args, fmt);
         fputs("[\033[32;1mINFO\033[m] ", stderr);
+        vfprintf(stderr, fmt, args);
+        fputc('\n', stderr);
+        va_end(args);
+    }
+}
+
+void debug(const char *fmt, ...) {
+    if (config.log_level > 3) {
+        va_list args;
+        va_start(args, fmt);
+        fputs("[DEBUG] ", stderr);
         vfprintf(stderr, fmt, args);
         fputc('\n', stderr);
         va_end(args);
@@ -146,7 +157,7 @@ static void parse_str(char **dst, const char *str, const char *dflt) {
 bool set_option(const char *name, const char *value) {
     int64_t v;
     if (!strcmp(options[o_log_level].name, name)) {
-        if (!parse_int(value, &v, 0, 3, 3)) goto e_value;
+        if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
         config.log_level = v;
         return true;
     } else if (!strcmp(options[o_config].name, name)) {
@@ -209,7 +220,7 @@ struct mapping map_file(const char *path) {
 
 e_open:
     if (fd >= 0) close(fd);
-    warn("Failed to map file '%s'", path);
+    debug("Failed to map file '%s'", path);
     return (struct mapping) { NULL, 0 };
 }
 
@@ -244,7 +255,7 @@ static void parse_config(void) {
         }
     }
 
-    //if (!cfg.addr) die("Cannot find config file anywhere");
+    if (!cfg.addr) debug("Cannot find config file anywhere");
 
     char *ptr = cfg.addr, *end = cfg.addr + cfg.size;
     char saved1 = '\0', saved2 = '\0';

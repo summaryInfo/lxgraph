@@ -18,6 +18,7 @@
 
 void info(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
 void warn(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
+void debug(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
 _Noreturn void die(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)));
 
 /* Configuration */
