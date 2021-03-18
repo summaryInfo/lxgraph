@@ -22,9 +22,10 @@ inline static void set_current(struct callgraph *cg, const char *fun, const char
     cg->file = strtab_put(&cg->strtab, file);
 }
 
-inline static void add_function_declaration(struct callgraph *cg, literal id) {
+inline static void add_function_declaration(struct callgraph *cg, literal id, bool global, bool inline_) {
     if (adjust_buffer((void **)&cg->defs, &cg->defs_caps, cg->defs_size + 1, sizeof *cg->defs)) {
         cg->defs[cg->defs_size++] = id;
+        literal_set_flags(id, lf_function | (global ? lf_global : 0) | (inline_ ? lf_inline : 0));
     }
 }
 
@@ -39,6 +40,7 @@ inline static void add_function_call(struct callgraph *cg, const char *str) {
 inline static void mark_as_definition(struct callgraph *cg, literal func) {
     literal def = cg->defs[cg->defs_size - 1];
     assert(def == func);
+    literal_set_flags(func, literal_get_flags(func) | lf_defined);
     literal_set_file(func, cg->file);
 }
 
@@ -55,13 +57,15 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
     case CXCursor_CXXMethod:
     case CXCursor_FunctionTemplate:;
         if (cg->function) break;
+        bool is_global =  clang_Cursor_getStorageClass(cur) != CX_SC_Extern;
+        bool is_inline = clang_Cursor_isFunctionInlined(cur);
         CXString name = clang_getCursorDisplayName(cur);
         CXFile file;
         // TODO Store line/column
         clang_getExpansionLocation(clang_getCursorLocation(cur), &file, NULL, NULL, NULL);
         CXString filename = clang_getFileName(file);
         set_current(cg, clang_getCString(name), clang_getCString(filename));
-        add_function_declaration(cg, cg->function);
+        add_function_declaration(cg, cg->function, is_global, is_inline);
         clang_visitChildren(cur, visit, data);
         set_current(cg, NULL, clang_getCString(filename));
         clang_disposeString(name);

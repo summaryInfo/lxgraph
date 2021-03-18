@@ -12,6 +12,7 @@ struct strtab_item {
     const char *name;
     literal file;
     uint64_t data;
+    enum literal_flags flags;
 };
 
 static bool strtab_item_cmp(const ht_head_t *a, const ht_head_t *b) {
@@ -46,11 +47,14 @@ uint64_t *literal_get_pdata(literal lit) {
 }
 
 void literal_set_file(literal lit, literal file) {
+    assert(file->flags & lf_file);
+    assert(lit->flags & lf_function);
     if (lit && lit->file) return;
     lit->file = file;
 }
 
 literal literal_get_file(literal lit) {
+    assert(lit->flags & lf_function);
     return lit->file;
 }
 
@@ -96,4 +100,12 @@ void strtab_merge(struct hashtable *restrict dst, struct hashtable *restrict src
             ht_next(&it);
         }
     }
+}
+
+void literal_set_flags(literal lit, enum literal_flags flags) {
+    lit->flags = flags;
+}
+
+enum literal_flags literal_get_flags(literal lit) {
+    return lit->flags;
 }
