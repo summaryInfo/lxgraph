@@ -107,6 +107,11 @@ static void do_parse(int thread_index, void *varg) {
 
     for (size_t i = arg->offset; i < arg->offset + arg->size; i++) {
         CXCompileCommand cmd = clang_CompileCommands_getCommand(arg->cmds, i);
+        if (config.log_level > 3) {
+            CXString file = clang_CompileCommand_getFilename(cmd);
+            syncdebug("Parsing file '%s'", clang_getCString(file));
+            clang_disposeString(file);
+        }
         size_t nargs = clang_CompileCommand_getNumArgs(cmd);
         CXString args[nargs];
         const char *cargs[nargs];

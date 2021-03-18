@@ -40,6 +40,7 @@ static void dfs(literal root, struct invokation *calls, struct invokation *end) 
 }
 
 static void filter_function(struct callgraph *cg, literal fun) {
+    debug("Excluding function '%s'", fun ? literal_get_name(fun) : "<NULL>");
     {
         // Remove edges
         struct invokation *dst = cg->calls, *src = cg->calls;
@@ -64,6 +65,7 @@ static void filter_function(struct callgraph *cg, literal fun) {
 }
 
 static void filter_file(struct callgraph *cg, literal file) {
+    debug("Excluding file '%s'", file ? literal_get_name(file) : "<NULL>");
     {
         // Remove edges
         struct invokation *dst = cg->calls, *src = cg->calls;
@@ -116,9 +118,13 @@ void remove_unused(struct callgraph *cg) {
             "main()",
             "start_kernel()"
         };
-        for (size_t i = 0; i < sizeof roots/sizeof *roots; i++)
+        for (size_t i = 0; i < sizeof roots/sizeof *roots; i++) {
+            debug("Makring root '%s'", roots[i]);
             dfs(strtab_put(&cg->strtab, roots[i]), cg->calls, cg->calls + cg->calls_size);
+        }
     }
+
+    debug("Removing unreachable functions");
 
     {
         // Remove unreachable edges
@@ -144,6 +150,7 @@ void remove_unused(struct callgraph *cg) {
 }
 
 void colapse_duplicates(struct callgraph *cg) {
+    debug("Collapsing duplicate edges");
     struct invokation *dst = cg->calls, *src = cg->calls + 1;
     struct invokation *end = dst + cg->calls_size;
     for (; src < end; src++) {
@@ -172,7 +179,10 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
         filter_file(cg, strtab_put(&cg->strtab, file_exclude[i]));
 
     // TODO make this configurable
-    const char *function_exclude[] = { NULL };
+    const char *function_exclude[] = {
+        "warn(const char *, ...)",
+        NULL
+    };
     for (size_t i = 0; i < sizeof function_exclude/sizeof *function_exclude; i++)
         filter_function(cg, strtab_put(&cg->strtab, function_exclude[i]));
 
@@ -187,8 +197,10 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     renew_graph(cg);
     qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def2);
 
+    debug("Writing graph to '%s'...", destpath ? destpath : "<stdout>");
+
     fputs("digraph \"callgraph\" {\n", dst);
-    fprintf(dst, "\tlayout = \"sfdp\";\n");
+    fprintf(dst, "\tlayout = \"neato\";\n");
     literal old_file = (void *)-1, *firstdef = NULL, *edef = cg->defs + cg->defs_size;
 
     /* Print functions for each file */
@@ -196,7 +208,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
         literal file = literal_get_file(cg->defs[i]);
         if (old_file != file) {
             fprintf(dst, "\tsubgraph \"%s\" {\n", file ? literal_get_name(file) : "<external>");
-            fprintf(dst, "\t\tlayout = \"sfdp\";\n");
+            fprintf(dst, "\t\tlayout = \"neato\";\n");
             old_file = literal_get_file(cg->defs[i]);
             firstdef = cg->defs + i;
         }
@@ -219,6 +231,8 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
             fprintf(dst, "\tn%p -> n%p;\n", (void *)cg->calls[i].caller, (void *)cg->calls[i].callee);
     }
     fputs("}\n", dst);
+
+    debug("Done.");
 
     if (dst != stdout) fclose(dst);
 }

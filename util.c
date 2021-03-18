@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define MAX_OPTION_DESC 256
 
@@ -75,6 +76,20 @@ void debug(const char *fmt, ...) {
         fputs("[DEBUG] ", stderr);
         vfprintf(stderr, fmt, args);
         fputc('\n', stderr);
+        va_end(args);
+    }
+}
+
+void syncdebug(const char *fmt, ...) {
+    if (config.log_level > 3) {
+        static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+        va_list args;
+        va_start(args, fmt);
+        pthread_mutex_lock(&mutex);
+        fputs("[DEBUG] ", stderr);
+        vfprintf(stderr, fmt, args);
+        fputc('\n', stderr);
+        pthread_mutex_unlock(&mutex);
         va_end(args);
     }
 }
