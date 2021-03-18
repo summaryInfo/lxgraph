@@ -47,9 +47,10 @@ uint64_t *literal_get_pdata(literal lit) {
 }
 
 void literal_set_file(literal lit, literal file) {
+    assert(lit);
     assert(file->flags & lf_file);
     assert(lit->flags & lf_function);
-    if (lit && lit->file) return;
+    if (lit->file) lit->flags |= lf_dup;
     lit->file = file;
 }
 
@@ -78,6 +79,12 @@ literal strtab_put(struct hashtable *ht, const char *str) {
     return (literal)new;
 }
 
+literal strtab_put2(struct hashtable *ht, const char *str, enum literal_flags fl) {
+    literal id = strtab_put(ht, str);
+    if (id) id->flags |= fl;
+    return id;
+}
+
 void strtab_merge(struct hashtable *restrict dst, struct hashtable *restrict src) {
     ht_iter_t it = ht_begin(src);
     ht_iter_t it2 = it;
@@ -96,6 +103,8 @@ void strtab_merge(struct hashtable *restrict dst, struct hashtable *restrict src
             literal olit = (literal)*old, clit = (literal)cur;
             if (!olit->file)
                 olit->file = clit->file;
+            else if (clit->file)
+                olit->flags |= lf_dup;
             clit->file = olit;
             ht_next(&it);
         }

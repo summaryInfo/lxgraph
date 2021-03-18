@@ -6,15 +6,6 @@
 #include <math.h>
 #include <stdio.h>
 
-static int cmp_def2(const void *a, const void *b) {
-    literal da = *(literal *)a, db = *(literal *)b;
-    literal fa = literal_get_file(da), fb = literal_get_file(db);
-    if (fa < fb) return -1;
-    else if (fa > fb) return 1;
-    if (da < db) return -1;
-    return (da > db);
-}
-
 void dump_dot(struct callgraph *cg, const char *destpath) {
     FILE *dst = destpath ? fopen(destpath, "w") : stdout;
     if (!dst) {
@@ -24,7 +15,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
 
     /* Sort by file */
     renew_graph(cg);
-    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def2);
+    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def_by_file);
 
     debug("Writing graph to '%s'...", destpath ? destpath : "<stdout>");
 
@@ -33,7 +24,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     fprintf(dst, "\tsmoothing = \"%s\";\n", "graph_dist");
     fprintf(dst, "\tesep = \"+%u\";\n", 32);
     fprintf(dst, "\toverlap = \"%s\";\n", "false");
-    fprintf(dst, "\tsplines = \"%s\";\n", "compound");
+    fprintf(dst, "\tsplines = \"%s\";\n", "true");
     fprintf(dst, "\toutputorder = \"%s\";\n", "edgesfirst");
     fprintf(dst, "\tnode[shape=\"%s\" style=\"%s\" color=\"%s\"]\n", "box", "filled", "white");
 

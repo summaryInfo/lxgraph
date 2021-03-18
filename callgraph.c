@@ -18,8 +18,8 @@
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function || !fun); // No nested functions allowed
     if (!strncmp(file, "./", 2)) file += 2;
-    cg->function = fun ? strtab_put(&cg->strtab, fun) : NULL;
-    cg->file = strtab_put(&cg->strtab, file);
+    cg->function = fun ? strtab_put2(&cg->strtab, fun, lf_function) : NULL;
+    cg->file = strtab_put2(&cg->strtab, file, lf_file);
 }
 
 inline static void add_function_declaration(struct callgraph *cg, literal id, bool global, bool inline_) {
@@ -32,7 +32,7 @@ inline static void add_function_declaration(struct callgraph *cg, literal id, bo
 inline static void add_function_call(struct callgraph *cg, const char *str) {
     literal id = strtab_put(&cg->strtab, str), fn = cg->function;
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
-        if (!fn) fn = strtab_put(&cg->strtab, "<static expr>");
+        if (!fn) fn = strtab_put2(&cg->strtab, "<static expr>", lf_function);
         cg->calls[cg->calls_size++] = (struct invokation) { fn, id, 1.f };
     }
 }
@@ -141,7 +141,7 @@ static void do_parse(int thread_index, void *varg) {
     clang_disposeIndex(index);
 }
 
-static int cmp_def(const void *a, const void *b) {
+int cmp_def_by_file(const void *a, const void *b) {
     literal da = *(literal *)a, db = *(literal *)b;
     literal fa = literal_get_file(da), fb = literal_get_file(db);
     // May be I should sort by actual string to make locations persistent?
@@ -151,27 +151,72 @@ static int cmp_def(const void *a, const void *b) {
     return (da > db);
 }
 
+int cmp_def_by_addr(const void *a, const void *b) {
+    literal da = *(literal *)a, db = *(literal *)b;
+    literal fa = literal_get_file(da), fb = literal_get_file(db);
+    if (da < db) return -1;
+    else if (da > db) return 1;
+    if (fa < fb) return -1;
+    return (fa > fb);
+}
+
+int cmp_call_by_caller(const void *a, const void *b) {
+    const struct invokation *ia = (const struct invokation *)a;
+    const struct invokation *ib = (const struct invokation *)b;
+    if (ia->caller < ib->caller) return -1;
+    if (ia->caller > ib->caller) return 1;
+    if (ia->callee < ib->callee) return -1;
+    return (ia->callee > ib->callee);
+}
+
+int cmp_call_by_callee(const void *a, const void *b) {
+    const struct invokation *ia = (const struct invokation *)a;
+    const struct invokation *ib = (const struct invokation *)b;
+    if (ia->callee < ib->callee) return -1;
+    if (ia->callee > ib->callee) return 1;
+    if (ia->caller < ib->caller) return -1;
+    return (ia->caller > ib->caller);
+}
+
 static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
     /* Move string table */
 
     strtab_merge(&dst->strtab, &src->strtab);
+    size_t size = src->strtab.size;
+    literal *tmp = malloc(size*sizeof *tmp);
     ht_iter_t it = ht_begin(&src->strtab);
-    while (ht_current(&it)) {
-        literal cur = (literal)ht_erase_current(&it);
-        literal old = literal_get_file(cur);
+    for (literal *ptr = tmp; ht_current(&it); ptr++)
+        *ptr = (literal)ht_erase_current(&it);
+    qsort(tmp, size, sizeof *src->calls, cmp_def_by_addr);
 
-        for (size_t i = 0; i < src->calls_size; i++) {
-            if (src->calls[i].callee == cur)
-                src->calls[i].callee = old;
-            if (src->calls[i].caller == cur)
-                src->calls[i].caller = old;
+    if (src->calls) {
+        qsort(src->calls, size, sizeof *src->calls, cmp_call_by_callee);
+        struct invokation *it1 = src->calls, *it1_end = src->calls + src->calls_size;
+        for (literal *it2 = tmp; it1 < it1_end; it1++) {
+            while (*it2 < it1->callee) it2++;
+            if (*it2 == it1->callee) it1->callee = literal_get_file(*it2);
         }
-        for (size_t i = 0; i < src->defs_size; i++) {
-            if (src->defs[i] == cur)
-                src->defs[i] = old;
+
+        qsort(src->calls, size, sizeof *src->calls, cmp_call_by_caller);
+        it1 = src->calls, it1_end = src->calls + src->calls_size;
+        for (literal *it2 = tmp; it1 < it1_end; it1++) {
+            while (*it2 < it1->caller) it2++;
+            if (*it2 == it1->caller) it1->caller = literal_get_file(*it2);
         }
-        free(cur);
     }
+
+    if (src->defs) {
+        qsort(src->defs, src->defs_size, sizeof *src->defs, cmp_def_by_addr);
+        literal *it3 = src->defs, *it3_end = src->defs + src->defs_size;
+        for (literal *it2 = tmp; it3 < it3_end; it3++) {
+            while (*it2 < *it3) it2++;
+            if (*it2 == *it3) *it3 = literal_get_file(*it2);
+        }
+    }
+
+    for (size_t i = 0; i < size; i++)
+        free(tmp[i]);
+    free(tmp);
 
     dst->file = NULL;
     dst->function = NULL;
@@ -212,13 +257,13 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         }
 
         /* O(nlogn) sort */
-        qsort(dst->defs, dst->defs_size, sizeof *dst->defs, cmp_def);
+        qsort(dst->defs, dst->defs_size, sizeof *dst->defs, cmp_def_by_file);
 
         /* O(n) deduplication */
         literal *ddef = dst->defs, *sdef, *enddef = dst->defs + dst->defs_size;
         for (sdef = ddef + 1; sdef < enddef; sdef++) {
             if (!literal_eq(*ddef, *sdef)) *++ddef = *sdef;
-            else if (!literal_get_file(*ddef))
+            else if (!literal_get_file(*ddef) && literal_get_file(*sdef))
                 literal_set_file(*ddef, literal_get_file(*sdef));
         }
 
@@ -279,7 +324,7 @@ struct callgraph *parse_directory(const char *path) {
 
     if (nproc == 1) {
         qsort(cgparts[0]->defs, cgparts[0]->defs_size,
-              sizeof *cgparts[0]->defs, cmp_def);
+              sizeof *cgparts[0]->defs, cmp_def_by_file);
     } else {
         size_t n = nproc;
         while (n > 1) {

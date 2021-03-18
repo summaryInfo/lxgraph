@@ -11,11 +11,13 @@ enum literal_flags {
     lf_defined = 1 << 2,
     lf_function = 1 << 3,
     lf_file = 1 << 4,
+    lf_dup = 1 << 5,
 };
 
 void init_strtab(struct hashtable *strtab);
 void fini_strtab(struct hashtable *strtab);
 literal strtab_put(struct hashtable *ht, const char *str);
+literal strtab_put2(struct hashtable *ht, const char *str, enum literal_flags fl);
 /* duplicates are left in src */
 void strtab_merge(struct hashtable *restrict dst, struct hashtable *restrict src);
 

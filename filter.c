@@ -133,8 +133,8 @@ static void remove_unused(struct callgraph *cg) {
         literal *dst = cg->defs, *src = cg->defs;
         literal *end = dst + cg->defs_size;
         for (; src < end; src++) {
-            if (*literal_get_pdata(*src) & 1)
-                *dst++ = *src;
+            if (*literal_get_pdata(*src) & 1) *dst++ = *src;
+            else debug("Removing unused function '%s'", literal_get_name(*src));
         }
         cg->defs_size = dst - cg->defs;
     }
