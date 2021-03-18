@@ -40,6 +40,7 @@ static uint8_t *storage_end;
 static void *worker(void *arg) {
     (void)arg;
 
+    int thread_index = (uintptr_t)arg;
 
     while (!__atomic_load_n(&should_exit, __ATOMIC_RELAXED)) {
         pthread_mutex_lock(&in_mtx);
@@ -59,7 +60,7 @@ static void *worker(void *arg) {
 
         pthread_mutex_unlock(&in_mtx);
 
-        newjob->func((uintptr_t)arg, newjob->data);
+        newjob->func(thread_index, newjob->data);
         __atomic_sub_fetch(&active, 1, __ATOMIC_RELEASE);
     }
     return NULL;

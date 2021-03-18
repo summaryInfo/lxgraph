@@ -255,7 +255,10 @@ static void parse_config(void) {
         }
     }
 
-    if (!cfg.addr) debug("Cannot find config file anywhere");
+    if (!cfg.addr) {
+        debug("Cannot find config file anywhere");
+        return;
+    }
 
     char *ptr = cfg.addr, *end = cfg.addr + cfg.size;
     char saved1 = '\0', saved2 = '\0';

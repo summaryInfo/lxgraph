@@ -63,6 +63,8 @@ void remove_unused(struct callgraph *cg) {
         // TODO Make this configurable
         const char *roots[] = {
             "main(int, char **)",
+            "main()",
+            "start_kernel()"
         };
         for (size_t i = 0; i < sizeof roots/sizeof *roots; i++)
             dfs(strtab_put(&cg->strtab, roots[i]), cg->calls, cg->calls + cg->calls_size);

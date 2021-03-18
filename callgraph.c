@@ -13,6 +13,8 @@
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 
+#define BATCH_SIZE 128
+
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function || !fun); // No nested functions allowed
     if (!strncmp(file, "./", 2)) file += 2;
@@ -84,10 +86,7 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
 }
 
 void free_callgraph(struct callgraph *cg) {
-    ht_iter_t it = ht_begin(&cg->strtab);
-    while (ht_current(&it))
-        free(ht_erase_current(&it));
-    ht_free(&cg->strtab);
+    fini_strtab(&cg->strtab);
     free(cg->defs);
     free(cg->calls);
     free(cg);
@@ -171,16 +170,21 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
     src->function = NULL;
 
     /* Merge calls vector (just append it) */
-
-    bool res = adjust_buffer((void **)&dst->calls, &dst->calls_caps,
-                             dst->calls_size + src->calls_size, sizeof *dst->calls);
-    assert(res);
-    memcpy(dst->calls + dst->calls_size, src->calls, src->calls_size * sizeof *dst->calls);
-    dst->calls_size += src->calls_size;
-    free(src->calls);
+    if (!dst->calls_size) {
+        dst->calls = src->calls;
+        dst->calls_size = src->calls_size;
+        dst->calls_caps = src->calls_caps;
+    } else if (src->calls_size) {
+        bool res = adjust_buffer((void **)&dst->calls, &dst->calls_caps,
+                                 dst->calls_size + src->calls_size, sizeof *dst->calls);
+        assert(res);
+        memcpy(dst->calls + dst->calls_size, src->calls, src->calls_size * sizeof *dst->calls);
+        dst->calls_size += src->calls_size;
+        free(src->calls);
+    }
+    src->calls_caps = 0;
+    src->calls_size = 0;
     src->calls = NULL;
-    src->calls_caps = 0;
-    src->calls_caps = 0;
 
     /* Merge definitions vector (append, then deduplicate) */
 
@@ -189,12 +193,14 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         dst->defs_size = src->defs_size;
         dst->defs_caps = src->defs_caps;
     } else {
-        res = adjust_buffer((void **)&dst->defs, &dst->defs_caps,
-                                 dst->defs_size + src->defs_size, sizeof *dst->defs);
-        assert(res);
-        memcpy(dst->defs + dst->defs_size, src->defs, src->defs_size * sizeof *dst->defs);
-        dst->defs_size += src->defs_size;
-        free(src->defs);
+        if (src->defs_size) {
+            bool res = adjust_buffer((void **)&dst->defs, &dst->defs_caps,
+                                     dst->defs_size + src->defs_size, sizeof *dst->defs);
+            assert(res);
+            memcpy(dst->defs + dst->defs_size, src->defs, src->defs_size * sizeof *dst->defs);
+            dst->defs_size += src->defs_size;
+            free(src->defs);
+        }
 
         /* O(nlogn) sort */
         qsort(dst->defs, dst->defs_size, sizeof *dst->defs, cmp_def);
@@ -209,9 +215,22 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
 
         dst->defs_size = ddef - dst->defs + 1;
     }
+
     src->defs_caps = 0;
     src->defs_size = 0;
     src->defs = NULL;
+}
+
+struct merge_arg {
+    struct callgraph *dst;
+    struct callgraph *src;
+};
+
+static void do_merge_parallel(int thread_index, void *varg) {
+    struct merge_arg *arg = varg;
+    (void)thread_index;
+    merge_move_callgraph(arg->dst, arg->src);
+    free_callgraph(arg->src);
 }
 
 struct callgraph *parse_directory(const char *path) {
@@ -236,7 +255,6 @@ struct callgraph *parse_directory(const char *path) {
      * in project directory so chdir() temporaly */
     chdir(path);
 
-#define BATCH_SIZE 128
     ssize_t ncmds = clang_CompileCommands_getSize(ccmds);
     for (ssize_t offset = 0; ncmds > offset; offset += BATCH_SIZE) {
         struct arg arg = {
@@ -250,14 +268,21 @@ struct callgraph *parse_directory(const char *path) {
     }
     drain_work();
 
-    for (ssize_t i = 1; i < nproc; i++) {
-        merge_move_callgraph(cgparts[0], cgparts[i]);
-        free_callgraph(cgparts[i]);
-    }
-
     if (nproc == 1) {
         qsort(cgparts[0]->defs, cgparts[0]->defs_size,
               sizeof *cgparts[0]->defs, cmp_def);
+    } else {
+        size_t n = nproc;
+        while (n > 1) {
+            size_t cnt = n/2, off = (n+1)/2;
+            do {
+                debug("Merging %zd into %zd", cnt + off - 1, cnt - 1);
+                struct merge_arg arg = { cgparts[cnt - 1], cgparts[cnt + off - 1] };
+                submit_work(do_merge_parallel, &arg, sizeof arg);
+            } while (--cnt > 0);
+            drain_work();
+            n = off;
+        }
     }
 
     clang_CompileCommands_dispose(ccmds);
