@@ -55,7 +55,6 @@ void literal_set_file(literal lit, literal file) {
 }
 
 literal literal_get_file(literal lit) {
-    assert(lit->flags & lf_function);
     return lit->file;
 }
 

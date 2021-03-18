@@ -187,29 +187,32 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
     ht_iter_t it = ht_begin(&src->strtab);
     for (literal *ptr = tmp; ht_current(&it); ptr++)
         *ptr = (literal)ht_erase_current(&it);
-    qsort(tmp, size, sizeof *src->calls, cmp_def_by_addr);
+    qsort(tmp, size, sizeof *tmp, cmp_def_by_addr);
 
-    if (src->calls) {
-        qsort(src->calls, size, sizeof *src->calls, cmp_call_by_callee);
+    if (src->calls && size) {
+        qsort(src->calls, src->calls_size, sizeof *src->calls, cmp_call_by_callee);
         struct invokation *it1 = src->calls, *it1_end = src->calls + src->calls_size;
         for (literal *it2 = tmp; it1 < it1_end; it1++) {
-            while (*it2 < it1->callee) it2++;
+            while (it2 < tmp + size && *it2 < it1->callee) it2++;
+            if (it2 >= tmp + size) break;
             if (*it2 == it1->callee) it1->callee = literal_get_file(*it2);
         }
 
-        qsort(src->calls, size, sizeof *src->calls, cmp_call_by_caller);
+        qsort(src->calls, src->calls_size, sizeof *src->calls, cmp_call_by_caller);
         it1 = src->calls, it1_end = src->calls + src->calls_size;
         for (literal *it2 = tmp; it1 < it1_end; it1++) {
-            while (*it2 < it1->caller) it2++;
+            while (it2 < tmp + size && *it2 < it1->caller) it2++;
+            if (it2 >= tmp + size) break;
             if (*it2 == it1->caller) it1->caller = literal_get_file(*it2);
         }
     }
 
-    if (src->defs) {
+    if (src->defs && size) {
         qsort(src->defs, src->defs_size, sizeof *src->defs, cmp_def_by_addr);
         literal *it3 = src->defs, *it3_end = src->defs + src->defs_size;
         for (literal *it2 = tmp; it3 < it3_end; it3++) {
-            while (*it2 < *it3) it2++;
+            while (it2 < tmp + size && *it2 < *it3) it2++;
+            if (it2 >= tmp + size) break;
             if (*it2 == *it3) *it3 = literal_get_file(*it2);
         }
     }
