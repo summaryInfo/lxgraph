@@ -57,7 +57,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
                 struct invokation *it = cg->calls + (*literal_get_pdata(*def) >> 16);
                 for (; it < cg->calls + cg->calls_size && it->caller == *def; it++)
                     if (literal_get_file(it->caller) == literal_get_file(it->callee))
-                        fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n", (void *)it->caller, (void *)it->callee, pow(cg->calls[i].weight, 0.6));
+                        fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n", (void *)it->caller, (void *)it->callee, MIN(pow(cg->calls[i].weight, 0.6), 20));
             }
             fputs("\t}\n", dst);
         }
@@ -67,7 +67,7 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     for (size_t i = 0; i < cg->calls_size; i++) {
         if (literal_get_file(cg->calls[i].caller) != literal_get_file(cg->calls[i].callee))
             fprintf(dst, "\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
-                (void *)cg->calls[i].caller, (void *)cg->calls[i].callee, pow(cg->calls[i].weight, 0.6));
+                (void *)cg->calls[i].caller, (void *)cg->calls[i].callee, MIN(pow(cg->calls[i].weight, 0.6), 20));
     }
     fputs("}\n", dst);
 
