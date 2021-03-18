@@ -32,7 +32,7 @@ inline static void add_function_call(struct callgraph *cg, const char *str) {
     literal id = strtab_put(&cg->strtab, str), fn = cg->function;
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
         if (!fn) fn = strtab_put(&cg->strtab, "<static expr>");
-        cg->calls[cg->calls_size++] = (struct invokation) { fn, id };
+        cg->calls[cg->calls_size++] = (struct invokation) { fn, id, 1.f };
     }
 }
 

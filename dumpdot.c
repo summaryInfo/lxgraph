@@ -3,6 +3,7 @@
 #include "util.h"
 #include "callgraph.h"
 
+#include <math.h>
 #include <stdio.h>
 
 static int cmp_def2(const void *a, const void *b) {
@@ -64,7 +65,8 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     /* Print all edges between files */
     for (size_t i = 0; i < cg->calls_size; i++) {
         if (literal_get_file(cg->calls[i].caller) != literal_get_file(cg->calls[i].callee))
-            fprintf(dst, "\tn%p -> n%p;\n", (void *)cg->calls[i].caller, (void *)cg->calls[i].callee);
+            fprintf(dst, "\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
+                (void *)cg->calls[i].caller, (void *)cg->calls[i].callee, pow(cg->calls[i].weight, 0.6));
     }
     fputs("}\n", dst);
 

@@ -145,9 +145,10 @@ static void colapse_duplicates(struct callgraph *cg) {
     struct invokation *dst = cg->calls, *src = cg->calls + 1;
     struct invokation *end = dst + cg->calls_size;
     for (; src < end; src++) {
-        // TODO Increase weight of duplicate node
         if (dst->callee != src->callee || dst->caller != src->caller)
             *++dst = *src;
+        else
+            dst->weight++;
     }
     cg->calls_size = dst - cg->calls + 1;
 }
@@ -166,6 +167,7 @@ void filter_graph(struct callgraph *cg) {
     // TODO make this configurable
     const char *function_exclude[] = {
         "warn(const char *, ...)",
+        "die(const char *, ...)",
         NULL
     };
     for (size_t i = 0; i < sizeof function_exclude/sizeof *function_exclude; i++)

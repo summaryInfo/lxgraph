@@ -15,6 +15,7 @@ struct callgraph {
     struct invokation {
         literal caller;
         literal callee;
+        float weight;
     } *calls;
     size_t calls_caps;
     size_t calls_size;
