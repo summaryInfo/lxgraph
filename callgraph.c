@@ -52,6 +52,7 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
     case CXCursor_FunctionDecl:
     case CXCursor_CXXMethod:
     case CXCursor_FunctionTemplate:;
+        if (cg->function) break;
         CXString name = clang_getCursorDisplayName(cur);
         CXFile file;
         // TODO Store line/column
@@ -99,11 +100,9 @@ struct arg {
     size_t size;
 };
 
-static void do_parse(void *varg) {
+static void do_parse(int thread_index, void *varg) {
     struct arg *arg = varg;
-    struct callgraph *cg = calloc(1, sizeof *cg);
-    init_strtab(&cg->strtab);
-    *arg->pres = cg;
+    struct callgraph *cg = arg->pres[thread_index];
 
     CXIndex index = clang_createIndex(1, config.log_level > 1);
 
@@ -217,6 +216,10 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
 
 struct callgraph *parse_directory(const char *path) {
     struct callgraph *cgparts[nproc];
+    for (ssize_t i = 0; i < nproc; i++) {
+        cgparts[i] = calloc(1, sizeof *cgparts[0]);
+        init_strtab(&cgparts[i]->strtab);
+    }
 
     CXCompilationDatabase_Error err = CXCompilationDatabase_NoError;
     CXCompilationDatabase cdb = clang_CompilationDatabase_fromDirectory(path, &err);
@@ -233,15 +236,16 @@ struct callgraph *parse_directory(const char *path) {
      * in project directory so chdir() temporaly */
     chdir(path);
 
+#define BATCH_SIZE 128
     ssize_t ncmds = clang_CompileCommands_getSize(ccmds);
-    ssize_t cmds_per_worker = ncmds/nproc, tail = ncmds%nproc;
-    for (ssize_t i = 0; i < nproc; i++) {
+    for (ssize_t offset = 0; ncmds > offset; offset += BATCH_SIZE) {
         struct arg arg = {
-            .pres = cgparts + i,
+            .pres = cgparts,
             .cmds = ccmds,
-            .offset = cmds_per_worker*i + MIN(tail, i),
-            .size = cmds_per_worker + (i < tail)
+            .offset = offset,
+            .size = MIN(BATCH_SIZE, ncmds - offset)
         };
+        offset += BATCH_SIZE;
         submit_work(do_parse, &arg, sizeof arg);
     }
     drain_work();

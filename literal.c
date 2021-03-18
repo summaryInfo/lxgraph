@@ -46,9 +46,7 @@ uint64_t *literal_get_pdata(literal lit) {
 }
 
 void literal_set_file(literal lit, literal file) {
-    if (lit && !(!lit->file || lit->file == file))
-        warn("%s %s %s", lit->name, lit->file ? lit->file->name : "<null>", file ? file->name : "<null>");
-    if (lit) assert(!lit->file || lit->file == file);
+    if (lit && lit->file) return;
     lit->file = file;
 }
 

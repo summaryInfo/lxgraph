@@ -18,7 +18,7 @@
 
 struct job {
     struct job *next;
-    void (*func)(void *);
+    void (*func)(int, void *);
     char data[];
 } __attribute__((aligned(16)));
 
@@ -59,7 +59,7 @@ static void *worker(void *arg) {
 
         pthread_mutex_unlock(&in_mtx);
 
-        newjob->func(newjob->data);
+        newjob->func((uintptr_t)arg, newjob->data);
         __atomic_sub_fetch(&active, 1, __ATOMIC_RELEASE);
     }
     return NULL;
@@ -84,7 +84,7 @@ void drain_work(void) {
         }
 
         if (newjob) {
-            newjob->func(newjob->data);
+            newjob->func(0, newjob->data);
             __atomic_sub_fetch(&active, 1, __ATOMIC_RELEASE);
         }
 
@@ -94,7 +94,7 @@ void drain_work(void) {
     pthread_mutex_unlock(&in_mtx);
 }
 
-void submit_work(void (*func)(void *), const void *data, size_t data_size) {
+void submit_work(void (*func)(int, void *), const void *data, size_t data_size) {
     // Align args on CACHE_LINE to prefent false sharing
     size_t inc = (sizeof(struct job) + data_size + CACHE_LINE - 1) & ~(CACHE_LINE - 1);
 
@@ -144,9 +144,9 @@ void init_workers(void) {
     pthread_rwlock_init(&rw, NULL);
 
     if (config.nthreads) nproc = config.nthreads;
-    else nproc = MIN(sysconf(_SC_NPROCESSORS_ONLN), MAX_THREADS);
-    for (int i = 0; i < nproc; i++)
-        pthread_create(threads + i, NULL, worker, NULL);
+    else nproc = MIN(sysconf(_SC_NPROCESSORS_ONLN), MAX_THREADS) + 1;
+    for (int i = 0; i < nproc - 1; i++)
+        pthread_create(threads + i, NULL, worker, (void *)(uintptr_t)(i + 1));
 }
 
 void fini_workers(_Bool force) {
@@ -155,7 +155,7 @@ void fini_workers(_Bool force) {
     __atomic_store_n(&should_exit, 1, __ATOMIC_RELAXED);
     pthread_cond_broadcast(&in_cond);
 
-    for (int i = 0; i < nproc; i++)
+    for (int i = 0; i < nproc - 1; i++)
         pthread_join(threads[i], NULL);
 
     pthread_cond_destroy(&in_cond);
