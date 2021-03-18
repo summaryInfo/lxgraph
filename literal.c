@@ -55,6 +55,8 @@ literal literal_get_file(literal lit) {
 }
 
 literal strtab_put(struct hashtable *ht, const char *str) {
+    if (!str) return NULL;
+
     size_t len = strlen(str);
     struct strtab_item key = { .head = { .hash = hash64(str, len) }, .name = str };
     ht_head_t **h = ht_lookup_ptr(ht, (ht_head_t *)&key);

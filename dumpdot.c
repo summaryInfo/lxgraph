@@ -39,24 +39,74 @@ static void dfs(literal root, struct invokation *calls, struct invokation *end) 
         dfs(it->callee, calls, end);
 }
 
-void remove_unused(struct callgraph *cg) {
+static void filter_function(struct callgraph *cg, literal fun) {
     {
-        // Clear marks and build
-        // associations between edges
-        // and nodes to be ables to dfs on O(n) time
-        size_t i = 0, j = 0;
-        while (j < cg->calls_size) {
-            while (i < cg->defs_size && cg->calls[j].caller != cg->defs[i])
-                *literal_get_pdata(cg->defs[i++]) = 0;
-            if (i == cg->defs_size) break;
-            *literal_get_pdata(cg->defs[i++]) = j++ << 16;
-            while (j < cg->calls_size &&
-                   cg->calls[j].caller == cg->calls[j - 1].caller) j++;
+        // Remove edges
+        struct invokation *dst = cg->calls, *src = cg->calls;
+        struct invokation *end = dst + cg->calls_size;
+        for (; src < end; src++) {
+            if (src->callee != fun && src->caller != fun)
+                *dst++ = *src;
         }
-        while (i < cg->defs_size)
-            *literal_get_pdata(cg->defs[i++]) = 0;
+        cg->calls_size = dst - cg->calls;
     }
 
+    {
+        // Remove functions
+        literal *dst = cg->defs, *src = cg->defs;
+        literal *end = dst + cg->defs_size;
+        for (; src < end; src++) {
+            if (*src != fun)
+                *dst++ = *src;
+        }
+        cg->defs_size = dst - cg->defs;
+    }
+}
+
+static void filter_file(struct callgraph *cg, literal file) {
+    {
+        // Remove edges
+        struct invokation *dst = cg->calls, *src = cg->calls;
+        struct invokation *end = dst + cg->calls_size;
+        for (; src < end; src++) {
+            if (literal_get_file(src->callee) != file &&
+                    literal_get_file(src->caller) != file)
+                *dst++ = *src;
+        }
+        cg->calls_size = dst - cg->calls;
+    }
+
+    {
+        // Remove functions
+        literal *dst = cg->defs, *src = cg->defs;
+        literal *end = dst + cg->defs_size;
+        for (; src < end; src++) {
+            if (literal_get_file(*src) != file)
+                *dst++ = *src;
+        }
+        cg->defs_size = dst - cg->defs;
+    }
+}
+
+static void renew_graph(struct callgraph *cg) {
+    // Clear marks and build
+    // associations between edges
+    // and nodes
+    size_t i = 0, j = 0;
+    while (j < cg->calls_size) {
+        while (i < cg->defs_size && cg->calls[j].caller != cg->defs[i])
+            *literal_get_pdata(cg->defs[i++]) = 0;
+        if (i == cg->defs_size) break;
+        *literal_get_pdata(cg->defs[i++]) = j++ << 16;
+        while (j < cg->calls_size &&
+               cg->calls[j].caller == cg->calls[j - 1].caller) j++;
+    }
+    while (i < cg->defs_size)
+        *literal_get_pdata(cg->defs[i++]) = 0;
+}
+
+void remove_unused(struct callgraph *cg) {
+    renew_graph(cg);
     {
         // Mark every function starting from roots
 
@@ -72,7 +122,7 @@ void remove_unused(struct callgraph *cg) {
 
     {
         // Remove unreachable edges
-        struct invokation *dst = cg->calls, *src = cg->calls + 1;
+        struct invokation *dst = cg->calls, *src = cg->calls;
         struct invokation *end = dst + cg->calls_size;
         for (; src < end; src++) {
             if (*literal_get_pdata(src->caller) & 1)
@@ -83,7 +133,7 @@ void remove_unused(struct callgraph *cg) {
 
     {
         // Remove unreachable functions
-        literal *dst = cg->defs, *src = cg->defs + 1;
+        literal *dst = cg->defs, *src = cg->defs;
         literal *end = dst + cg->defs_size;
         for (; src < end; src++) {
             if (*literal_get_pdata(*src) & 1)
@@ -111,6 +161,21 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
         return;
     }
 
+    // TODO make this configurable
+    const char *file_exclude[] = {
+        "/usr/lib/clang/11.0.0/include/emmintrin.h",
+        "/usr/include/bits/stdlib-bsearch.h",
+        "/usr/include/sys/stat.h",
+        NULL,
+    };
+    for (size_t i = 0; i < sizeof file_exclude/sizeof *file_exclude; i++)
+        filter_file(cg, strtab_put(&cg->strtab, file_exclude[i]));
+
+    // TODO make this configurable
+    const char *function_exclude[] = { NULL };
+    for (size_t i = 0; i < sizeof function_exclude/sizeof *function_exclude; i++)
+        filter_function(cg, strtab_put(&cg->strtab, function_exclude[i]));
+
     /* Sort by caller name */
     qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
     /* Sort by name */
@@ -119,25 +184,40 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     remove_unused(cg);
 
     /* Sort by file */
+    renew_graph(cg);
     qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def2);
 
     fputs("digraph \"callgraph\" {\n", dst);
-    fprintf(dst, "\tlayout = \"circo\";\n");
-    literal old_file = (void *)-1;
+    fprintf(dst, "\tlayout = \"sfdp\";\n");
+    literal old_file = (void *)-1, *firstdef = NULL, *edef = cg->defs + cg->defs_size;
+
+    /* Print functions for each file */
     for (size_t i = 0; i < cg->defs_size; i++) {
         literal file = literal_get_file(cg->defs[i]);
         if (old_file != file) {
-            if (old_file != (void *)-1) fputs("\t}\n", dst);
             fprintf(dst, "\tsubgraph \"%s\" {\n", file ? literal_get_name(file) : "<external>");
             fprintf(dst, "\t\tlayout = \"sfdp\";\n");
             old_file = literal_get_file(cg->defs[i]);
+            firstdef = cg->defs + i;
         }
         fprintf(dst, "\t\tn%p[label=\"%s\"];\n", (void *)cg->defs[i], literal_get_name(cg->defs[i]));
+        if (i < cg->defs_size && file != literal_get_file(cg->defs[i + 1])) {
+            /* Print edges within current file */
+            for (literal *def = firstdef; def < edef && literal_get_file(*def) == literal_get_file(*firstdef); def++) {
+                struct invokation *it = cg->calls + (*literal_get_pdata(*def) >> 16);
+                for (; it < cg->calls + cg->calls_size && it->caller == *def; it++)
+                    if (literal_get_file(it->caller) == literal_get_file(it->callee))
+                        fprintf(dst, "\t\tn%p -> n%p;\n", (void *)it->caller, (void *)it->callee);
+            }
+            fputs("\t}\n", dst);
+        }
     }
-    if (old_file != (void *)-1) fputs("\t}\n", dst);
 
-    for (size_t i = 0; i < cg->calls_size; i++)
-        fprintf(dst, "\tn%p -> n%p;\n", (void *)cg->calls[i].caller, (void *)cg->calls[i].callee);
+    /* Print all edges between files */
+    for (size_t i = 0; i < cg->calls_size; i++) {
+        if (literal_get_file(cg->calls[i].caller) != literal_get_file(cg->calls[i].callee))
+            fprintf(dst, "\tn%p -> n%p;\n", (void *)cg->calls[i].caller, (void *)cg->calls[i].callee);
+    }
     fputs("}\n", dst);
 
     if (dst != stdout) fclose(dst);
