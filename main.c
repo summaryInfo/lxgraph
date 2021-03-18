@@ -122,6 +122,7 @@ int main(int argc, char **argv) {
     struct callgraph *cg = parse_directory(config.build_dir);
     assert(cg);
 
+    filter_graph(cg);
     dump_dot(cg, config.output_path);
     free_callgraph(cg);
 

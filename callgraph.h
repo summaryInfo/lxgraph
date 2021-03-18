@@ -28,6 +28,7 @@ void free_callgraph(struct callgraph *cg);
 struct callgraph *parse_directory(const char *path);
 
 void dump_dot(struct callgraph *cg, const char *destpath);
-
+void filter_graph(struct callgraph *cg);
+void renew_graph(struct callgraph *cg);
 #endif
 

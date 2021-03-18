@@ -17,7 +17,7 @@ CFLAGS += -Wswitch-bool -Wpacked -Wshadow -Wformat-security
 CFLAGS += -Wswitch-unreachable -Wlogical-op -Wstringop-truncation
 CFLAGS += -Wbad-function-cast -Wnested-externs -Wstrict-prototypes
 
-OBJ := main.o util.o callgraph.o worker.o dumpdot.o literal.o
+OBJ := main.o util.o callgraph.o worker.o dumpdot.o literal.o filter.o
 
 LDLIBS += -lm -lclang -lpthread
 
@@ -47,5 +47,6 @@ callgraph.o: util.h hashtable.h callgraph.h worker.h literal.h
 literal.o: hashtable.h literal.h util.h
 worker.o: worker.h util.h
 dumpdot.o: callgraph.h util.h
+filter.o: callgraph.h util.h
 
 .PHONY: all clean install install-strip uninstall force
