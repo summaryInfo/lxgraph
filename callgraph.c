@@ -13,7 +13,7 @@
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 
-#define BATCH_SIZE 128
+#define BATCH_SIZE 16
 
 inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
     assert(!cg->function || !fun); // No nested functions allowed
