@@ -112,8 +112,12 @@ static void do_parse(int thread_index, void *varg) {
 
     CXIndex index = clang_createIndex(1, config.log_level > 1);
 
+
     for (size_t i = arg->offset; i < arg->offset + arg->size; i++) {
         CXCompileCommand cmd = clang_CompileCommands_getCommand(arg->cmds, i);
+        CXString dir = clang_CompileCommand_getDirectory(cmd);
+        chdir(clang_getCString(dir));
+        clang_disposeString(dir);
         if (config.log_level > 3) {
             CXString file = clang_CompileCommand_getFilename(cmd);
             syncdebug("Parsing file '%s'", clang_getCString(file));
@@ -310,10 +314,6 @@ struct callgraph *parse_directory(const char *path) {
     char buf[PATH_MAX + 1];
     char *res = getcwd(buf, sizeof buf -1);
     CXCompileCommands ccmds = clang_CompilationDatabase_getAllCompileCommands(cdb);
-
-    /* Parsing should be performed
-     * in project directory so chdir() temporaly */
-    chdir(path);
 
     ssize_t ncmds = clang_CompileCommands_getSize(ccmds);
     for (ssize_t offset = 0; ncmds > offset; offset += BATCH_SIZE) {
