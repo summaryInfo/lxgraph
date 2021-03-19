@@ -81,6 +81,7 @@ static void filter_file(struct callgraph *cg, literal file) {
         for (; src < end; src++) {
             if (literal_get_file(*src) != file)
                 *dst++ = *src;
+            else debug("    Removed '%s'", literal_get_name(*src));
         }
         cg->defs_size = dst - cg->defs;
     }
@@ -112,7 +113,7 @@ static void remove_unused(struct callgraph *cg) {
         const char *roots[] = {
             //"main(int, char **)",
             "main()",
-            "start_kernel()",
+            "x86_64_start_kernel(char *)",
             "do_syscall_64(unsigned long, struct pt_regs *)",
         };
         for (size_t i = 0; i < sizeof roots/sizeof *roots; i++) {

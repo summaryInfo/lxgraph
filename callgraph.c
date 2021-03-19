@@ -323,7 +323,6 @@ struct callgraph *parse_directory(const char *path) {
             .offset = offset,
             .size = MIN(BATCH_SIZE, ncmds - offset)
         };
-        offset += BATCH_SIZE;
         submit_work(do_parse, &arg, sizeof arg);
     }
     drain_work();
