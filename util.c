@@ -443,33 +443,28 @@ static void parse_config(void) {
     struct mapping cfg = {0};
     static char buf1[MAX(PATH_MAX, MAX_VAL_LEN)];
     static char buf2[MAX_VAL_LEN];
+    const char *config_taken =  NULL;
 
     /* Config file is search in following places:
-     * 1. sconf(SCONF_CONFIG_PATH) set with --config=
-     * 2. $XDG_CONFIG_HOME/<name>.conf
-     * 3. $HOME/.config/<name>.conf
+     * 1. --config=/-C
+     * 2. Project directory
+     * 3. Current directory
      * If file is not found in those places, just give up */
 
     if (config.config_path)
-        cfg = map_file(config.config_path);
+        cfg = map_file(config_taken = config.config_path);
     if (!cfg.addr) {
-        const char *xdg_cfg = getenv("XDG_CONFIG_HOME");
-        if (xdg_cfg) {
-            snprintf(buf1, sizeof buf1, "%s/"PROG_NAME".conf", xdg_cfg);
-            cfg = map_file(buf1);
-        }
+        snprintf(buf1, sizeof buf1, "%s/"PROG_NAME".conf", config.build_dir);
+        cfg = map_file(config_taken = buf1);
     }
-    if (!cfg.addr) {
-        const char *home = getenv("HOME");
-        if (home) {
-            snprintf(buf1, sizeof buf1, "%s/.config/"PROG_NAME".conf", home);
-            cfg = map_file(buf1);
-        }
-    }
+    if (!cfg.addr)
+        cfg = map_file(config_taken = PROG_NAME".conf");
 
     if (!cfg.addr) {
         debug("Cannot find config file anywhere");
         return;
+    } else {
+        debug("Picked config file '%s'", config_taken);
     }
 
     struct parse_state ps = {
