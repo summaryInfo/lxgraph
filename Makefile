@@ -4,7 +4,8 @@ BINDIR ?= /usr/local/bin
 MANDIR ?= /usr/local/share/man
 SHAREDIR ?= /usr/local/share
 
-CFLAGS ?= -O2 -flto -g -pthread -fsanitize=address,undefined
+CFLAGS ?= -O2 -flto -g -pthread
+#CFLAGS += -fsanitize=address,undefined
 
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic
 CFLAGS += -Wno-unknown-warning -Wno-unknown-warning-option

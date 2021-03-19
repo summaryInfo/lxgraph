@@ -146,14 +146,18 @@ static void remove_unused(struct callgraph *cg) {
     }
 }
 
-static void colapse_duplicates(struct callgraph *cg) {
+static void collapse_duplicates(struct callgraph *cg) {
     debug("Collapsing duplicate edges");
     struct invokation *dst = cg->calls, *src = cg->calls + 1;
     struct invokation *end = dst + cg->calls_size;
+    int last_line = 0, last_col = 0;
     for (; src < end; src++) {
-        if (dst->callee != src->callee || dst->caller != src->caller) *++dst = *src;
-        else if (dst->line != src->line || dst->col != src->col) {
-            warn("%s %s:: %d %d : %d %d", literal_get_name(dst->caller), literal_get_name(dst->callee), dst->line, dst->col, src->line, src->col);
+        if (dst->callee != src->callee || dst->caller != src->caller) {
+            *++dst = *src;
+            last_line = 0;
+            last_col = 0;
+        } else if (last_line != src->line || last_col != src->col) {
+            last_line = src->line, last_col = src->col;
             dst->weight++;
         }
     }
@@ -184,7 +188,7 @@ void filter_graph(struct callgraph *cg) {
     qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
     /* Sort by name */
     qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def);
-    colapse_duplicates(cg);
+    collapse_duplicates(cg);
     remove_unused(cg);
 
     renew_graph(cg);
