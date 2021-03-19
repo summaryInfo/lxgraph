@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <setjmp.h>
 
 #define MAX_OPTION_DESC 256
 
@@ -31,6 +32,10 @@ static struct options {
     [o_out] = {"out", ", -o<value>\t(Output file path)"},
     [o_path] = {"path", ", -p<value>\t(Build directory path)"},
     [o_threads] = {"threads", ", -T<value>\t(Number of threads to use, default is number of cores + 1)"},
+    [o_exclude_files] = {"exclude-files", "\t\t(List of files to exclude from the graph)"},
+    [o_exclude_functions] = {"exclude-functions", "\t\t(List of functions to exclude from the graph)"},
+    [o_root_files] = {"root-files", "\t\t(List of files to mark as roots of the graph)"},
+    [o_root_functions] = {"root-functions", "\t\t(List of functions to mark as roots of the graph)"},
 };
 
 struct config config;
@@ -170,23 +175,47 @@ static void parse_str(char **dst, const char *str, const char *dflt) {
 }
 
 bool set_option(const char *name, const char *value) {
-    int64_t v;
-    if (!strcmp(options[o_log_level].name, name)) {
-        if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
-        config.log_level = v;
-        return true;
-    } else if (!strcmp(options[o_config].name, name)) {
-        parse_str(&config.config_path, value, PROG_NAME".conf");
-        return true;
-    } else if (!strcmp(options[o_path].name, name)) {
-        parse_str(&config.build_dir, value, ".");
-        return true;
-    } else if (!strcmp(options[o_out].name, name)) {
-        parse_str(&config.output_path, value, "graph.dot");
-        return true;
-    } else if (!strcmp(options[o_threads].name, name)) {
-        if (!parse_int(value, &v, 1, 32, 0)) goto e_value;
-        config.nthreads = v;
+    static struct array_option *current;
+    if (name) {
+        int64_t v;
+        if (!strcmp(options[o_log_level].name, name)) {
+            if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
+            config.log_level = v;
+            return true;
+        } else if (!strcmp(options[o_config].name, name)) {
+            parse_str(&config.config_path, value, PROG_NAME".conf");
+            return true;
+        } else if (!strcmp(options[o_path].name, name)) {
+            parse_str(&config.build_dir, value, ".");
+            return true;
+        } else if (!strcmp(options[o_out].name, name)) {
+            parse_str(&config.output_path, value, "graph.dot");
+            return true;
+        } else if (!strcmp(options[o_threads].name, name)) {
+            if (!parse_int(value, &v, 1, 32, 0)) goto e_value;
+            config.nthreads = v;
+            return true;
+        } else if (!strcmp(options[o_exclude_files].name, name)) {
+            current = &config.exclude_files;
+        } else if (!strcmp(options[o_exclude_functions].name, name)) {
+            current = &config.exclude_functions;
+        } else if (!strcmp(options[o_root_functions].name, name)) {
+            current = &config.root_functions;
+        } else if (!strcmp(options[o_root_files].name, name)) {
+            current = &config.root_files;
+        } else current = NULL;
+    }
+
+    if (current) {
+        if (!value || *value) {
+            free(current->data);
+            *current = (struct array_option) { 0 };
+        } else {
+            bool res = adjust_buffer((void **)&current->data, &current->caps, current->size + 1, sizeof value);
+            assert(res);
+            current->data[current->size++] = strdup(value);
+            assert(current->data[current->size - 1]);
+        }
         return true;
     }
 
@@ -215,7 +244,9 @@ const char *usage_string(size_t idx) {
                 "\t--no-<X>, --<X>=no, --<X>=n, --<X>=false\n"
             "are equivalent to --<X>=0,\n"
             "where 'yes', 'y', 'true', 'no', 'n' and 'false' are case independet\n"
-            "All options are also accept special value 'default' to reset to built-in default\n";
+            "All non-array options are also accept special value 'default' to reset to built-in default\n"
+            "Array options accept one value at a time and append to the current value.\n"
+            "Specify empty value string to clear the array option\n";
     } else return NULL;
 }
 
@@ -243,9 +274,166 @@ void unmap_file(struct mapping map) {
     munmap(map.addr, map.size + 1);
 }
 
+#define MAX_VAL_LEN 1024
+
+struct parse_state {
+    const char *start;
+    const char *end;
+
+    const char *line_start;
+    size_t line_n;
+    bool skip_to_quote;
+    bool skip_to_bracket;
+
+    jmp_buf escape_path;
+};
+
+inline static void skip_spaces(struct parse_state *ps) {
+    while (ps->start < ps->end) {
+        if (*ps->start == '#') {
+            do ps->start++;
+            while (ps->start < ps->end && *ps->start != '\n');
+        } else if (isspace((unsigned)*ps->start)) {
+            if (*ps->start == '\n') {
+                ps->line_start = ps->start + 1;
+                ps->line_n++;
+            }
+            ps->start++;
+        } else break;
+    }
+}
+
+inline static bool is_end(struct parse_state *ps) {
+    return ps->start >= ps->end;
+}
+
+_Noreturn static void complain(struct parse_state *ps, const char *msg) {
+    int col = ps->start - ps->line_start;
+    warn("%s at line %zd column %d:", msg, ps->line_n, col);
+    warn("\t%s\n%*c", ps->line_start, col + 1, '^');
+    longjmp(ps->escape_path, 1);
+}
+
+inline static char comsume_hex_digit(struct parse_state *ps) {
+    unsigned h = *ps->start++;
+    if (h - '0' < 10) return h - '0';
+    if (h - 'A' < 6) return h - 'A';
+    if (h - 'a' < 6) return h - 'a';
+
+    ps->start--;
+    complain(ps, "Expected hex digit");
+}
+
+inline static char comsume_oct_digit(struct parse_state *ps) {
+    unsigned h = *ps->start++;
+    if (h - '0' < 8) return h - '0';
+
+    ps->start--;
+    complain(ps, "Expected octal digit");
+}
+
+inline static char unescaped(struct parse_state *ps) {
+    char ch = *ps->start++;
+    if (!ch) {
+        ps->start--;
+        complain(ps, "Unexpected end of file");
+    } else if (ch == '\\') {
+        switch(ch = *ps->start++) {
+        case '\0':
+            ps->start--;
+            complain(ps, "Unexpected end of file");
+        case '0':
+            if ((unsigned)*ps->start - '0' > 7)
+                return '\0';
+            // fallthrough
+        case '1': case '2': case '3':
+        case '4': case '5': case '6':
+        case '7': case '8': case '9': {
+            break;
+        }
+        case 'x': {
+            unsigned h0 = comsume_hex_digit(ps);
+            unsigned h1 = comsume_hex_digit(ps);
+            return (h0 << 4) | h1;
+        }
+        case 'u':
+        case 'U':
+            complain(ps, "Unicode escapes are not implemeneted");
+            break;
+        case 'a': return '\a';
+        case 'b': return '\b';
+        case 'e': return '\033';
+        case 'f': return '\f';
+        case 'n': return '\n';
+        case 'r': return '\r';
+        case 't': return '\t';
+        case 'v': return '\v';
+        }
+    }
+    if (ch == '\n') {
+        ps->line_start = ps->start;
+        ps->line_n++;
+    }
+    return ch;
+}
+
+inline static bool is_word_break(struct parse_state *ps) {
+    return isspace((unsigned)*ps->start) || !*ps->start || strchr("#=\"][", *ps->start);
+}
+
+inline static bool is_quoted_word_break(struct parse_state *ps) {
+    return !*ps->start || *ps->start == '"';
+}
+
+inline static bool comsume_if(struct parse_state *ps, char c) {
+    if (*ps->start == c) {
+        ps->start++;
+        return 1;
+    }
+    return 0;
+}
+
+static void consume(struct parse_state *ps, char c) {
+    skip_spaces(ps);
+    if (*ps->start++ != c) {
+        ps->start--;
+        complain(ps, "Unexpected character");
+    }
+}
+
+static bool parse_value(struct parse_state *ps, char *dst, char *end, bool allow_array) {
+    skip_spaces(ps);
+    if (is_end(ps)) complain(ps, "Unexpected end of file, expected value");
+
+    if (ps->skip_to_bracket && comsume_if(ps, ']')) {
+        ps->skip_to_bracket = 0;
+        return 1;
+    } else if (comsume_if(ps, '[')) {
+        ps->skip_to_bracket = 1;
+        if (!allow_array) complain(ps, "Nested arrays are not supported");
+        return 1;
+    } else if (comsume_if(ps, '"')) {
+        ps->skip_to_quote = 1;
+        while (dst < end) {
+            if (is_quoted_word_break(ps)) break;
+            *dst++ = unescaped(ps);
+        }
+        ps->skip_to_quote = 0;
+        if (!comsume_if(ps, '"')) complain(ps, "Unexpected end of file, expected \"");
+    } else {
+        while (dst < end) {
+            if (is_word_break(ps)) break;
+            *dst++ = unescaped(ps);
+        }
+    }
+    *dst = '\0';
+    return 0;
+}
+
 static void parse_config(void) {
     struct mapping cfg = {0};
-    char pathbuf[PATH_MAX];
+    static char buf1[MAX(PATH_MAX, MAX_VAL_LEN)];
+    static char buf2[MAX_VAL_LEN];
 
     /* Config file is search in following places:
      * 1. sconf(SCONF_CONFIG_PATH) set with --config=
@@ -258,15 +446,15 @@ static void parse_config(void) {
     if (!cfg.addr) {
         const char *xdg_cfg = getenv("XDG_CONFIG_HOME");
         if (xdg_cfg) {
-            snprintf(pathbuf, sizeof pathbuf, "%s/"PROG_NAME".conf", xdg_cfg);
-            cfg = map_file(pathbuf);
+            snprintf(buf1, sizeof buf1, "%s/"PROG_NAME".conf", xdg_cfg);
+            cfg = map_file(buf1);
         }
     }
     if (!cfg.addr) {
         const char *home = getenv("HOME");
         if (home) {
-            snprintf(pathbuf, sizeof pathbuf, "%s/.config/"PROG_NAME".conf", home);
-            cfg = map_file(pathbuf);
+            snprintf(buf1, sizeof buf1, "%s/.config/"PROG_NAME".conf", home);
+            cfg = map_file(buf1);
         }
     }
 
@@ -275,59 +463,39 @@ static void parse_config(void) {
         return;
     }
 
-    char *ptr = cfg.addr, *end = cfg.addr + cfg.size;
-    char saved1 = '\0', saved2 = '\0';
-    ssize_t line_n = 0;
-    while (ptr < end) {
-        line_n++;
+    struct parse_state ps = {
+        .start = cfg.addr,
+        .end = cfg.addr + cfg.size,
+        .line_start = cfg.addr,
+    };
 
-        while (ptr < end && isspace((unsigned)*ptr)) ptr++;
-        if (ptr >= end) break;
-
-        char *start = ptr;
-        if (isalpha((unsigned)*ptr)) {
-            char *name_start, *name_end, *value_start, *value_end;
-
-            name_start = ptr;
-
-            while (ptr < end && !isspace((unsigned)*ptr) && *ptr != '#' && *ptr != '=') ptr++;
-            name_end = ptr;
-
-            while (ptr < end && isblank((unsigned)*ptr)) ptr++;
-            if (ptr >= end || *ptr++ != '=') goto e_wrong_line;
-            while (ptr < end && isblank((unsigned)*ptr)) ptr++;
-            value_start = ptr;
-
-            if (*ptr == '"') /* quoted value */ {
-                ptr++;
-                while (ptr < end && *ptr != '"') ptr++;
-                value_end = ptr;
-                while (ptr < end && isblank((unsigned)*ptr)) ptr++;
-                if (*ptr == '#')
-                    while (ptr < end && *ptr != '\n') ptr++;
-                if (*ptr != '\n') goto e_wrong_line;
-            } else /* unquoted value */ {
-                while (ptr < end && *ptr != '\n') ptr++;
-                while (ptr > value_start && isblank((unsigned)ptr[-1])) ptr--;
-                value_end = ptr;
-            }
-
-            SWAP(*value_end, saved1);
-            SWAP(*name_end, saved2);
-            set_option(name_start, value_start);
-            SWAP(*name_end, saved2);
-            SWAP(*value_end, saved1);
-        } else if (*ptr == '#') {
-            while (ptr < end && *ptr != '\n') ptr++;
+start_from_next_line:
+    if (setjmp(ps.escape_path)) {
+        // Skip to the place where we know the state
+        if (ps.skip_to_bracket) {
+            while (ps.start < ps.end && *ps.start != ']') ps.start++;
+            ps.skip_to_bracket = 0;
+        } else if (ps.skip_to_quote) {
+            while (ps.start < ps.end && *ps.start != '"') ps.start++;
+            ps.skip_to_quote = 0;
         } else {
-e_wrong_line:
-            ptr = start;
-            while(ptr < end && *ptr != '\n') ptr++;
-            SWAP(*ptr, saved1);
-            warn("Can't parse config line #%zd: %s", line_n, start);
-            SWAP(*ptr, saved1);
-            ptr++;
+            while (ps.start < ps.end && !isspace((unsigned)*ps.start)) ps.start++;
         }
+        if (ps.start < ps.end) goto start_from_next_line;
+        unmap_file(cfg);
+        return;
+    }
+
+    while (!is_end(&ps)) {
+        parse_value(&ps, buf2, buf2 + sizeof buf2 - 1, 0);
+        consume(&ps, '=');
+        if (parse_value(&ps, buf1, buf1 + sizeof buf1 - 1, 1)) {
+            set_option(buf2, NULL);
+            while (!parse_value(&ps, buf1, buf1 + sizeof buf1 - 1, 0))
+                set_option(NULL, buf1);
+        }
+        set_option(buf2, buf1);
+        skip_spaces(&ps);
     }
 
     unmap_file(cfg);

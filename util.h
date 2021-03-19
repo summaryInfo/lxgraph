@@ -24,12 +24,22 @@ _Noreturn void die(const char *fmt, ...) __attribute__ ((format (printf, 1, 2)))
 
 /* Configuration */
 
+struct array_option {
+    size_t caps;
+    size_t size;
+    char **data;
+};
+
 struct config {
     char *config_path;
     char *output_path;
     char *build_dir;
     int32_t log_level;
     int32_t nthreads;
+    struct array_option exclude_files;
+    struct array_option exclude_functions;
+    struct array_option root_files;
+    struct array_option root_functions;
 };
 
 extern struct config config;
@@ -40,6 +50,10 @@ enum option {
     o_out,
     o_path,
     o_threads,
+    o_exclude_files,
+    o_exclude_functions,
+    o_root_files,
+    o_root_functions,
     o_MAX
 };
 

@@ -120,7 +120,7 @@ static void do_parse(int thread_index, void *varg) {
         clang_disposeString(dir);
         if (config.log_level > 3) {
             CXString file = clang_CompileCommand_getFilename(cmd);
-            syncdebug("Parsing file '%s'", clang_getCString(file));
+            syncdebug("Parsing file %zd '%s'", i, clang_getCString(file));
             clang_disposeString(file);
         }
         size_t nargs = clang_CompileCommand_getNumArgs(cmd);
