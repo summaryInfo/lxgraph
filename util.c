@@ -174,9 +174,17 @@ static void parse_str(char **dst, const char *str, const char *dflt) {
     *dst = res;
 }
 
+static void fini_array_option(struct array_option *current) {
+    for (size_t i = 0; i < current->size; i++)
+        free(current->data[i]);
+    free(current->data);
+    *current = (struct array_option) { 0 };
+}
+
 bool set_option(const char *name, const char *value) {
     static struct array_option *current;
     if (name) {
+        debug("Setting option option %s", value);
         int64_t v;
         if (!strcmp(options[o_log_level].name, name)) {
             if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
@@ -207,10 +215,11 @@ bool set_option(const char *name, const char *value) {
     }
 
     if (current) {
-        if (!value || *value) {
-            free(current->data);
-            *current = (struct array_option) { 0 };
+        if (!value || !*value) {
+            debug("  Clearing option array");
+            fini_array_option(current);
         } else {
+            debug("  Appending option %s", value);
             bool res = adjust_buffer((void **)&current->data, &current->caps, current->size + 1, sizeof value);
             assert(res);
             current->data[current->size++] = strdup(value);
@@ -510,6 +519,10 @@ void init_config(const char *path) {
 }
 
 void fini_config(void) {
+    fini_array_option(&config.exclude_files);
+    fini_array_option(&config.exclude_functions);
+    fini_array_option(&config.root_files);
+    fini_array_option(&config.root_functions);
     free(config.config_path);
     free(config.output_path);
     free(config.build_dir);
