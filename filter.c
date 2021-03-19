@@ -18,7 +18,12 @@ static int cmp_call(const void *a, const void *b) {
     if (ia->caller < ib->caller) return -1;
     if (ia->caller > ib->caller) return 1;
     if (ia->callee < ib->callee) return -1;
-    return (ia->callee > ib->callee);
+    if (ia->callee > ib->callee) return 1;
+    if (ia->line < ib->line) return -1;
+    if (ia->line > ib->line) return 1;
+    if (ia->col < ib->col) return -1;
+    if (ia->col > ib->col) return 1;
+    return 0;
 }
 
 static void dfs(literal root, struct invokation *calls, struct invokation *end) {
@@ -105,9 +110,10 @@ static void remove_unused(struct callgraph *cg) {
 
         // TODO Make this configurable
         const char *roots[] = {
-            "main(int, char **)",
+            //"main(int, char **)",
             "main()",
-            "start_kernel()"
+            "start_kernel()",
+            "do_syscall_64(unsigned long, struct pt_regs *)",
         };
         for (size_t i = 0; i < sizeof roots/sizeof *roots; i++) {
             debug("Makring root '%s'", roots[i]);
@@ -145,10 +151,11 @@ static void colapse_duplicates(struct callgraph *cg) {
     struct invokation *dst = cg->calls, *src = cg->calls + 1;
     struct invokation *end = dst + cg->calls_size;
     for (; src < end; src++) {
-        if (dst->callee != src->callee || dst->caller != src->caller)
-            *++dst = *src;
-        else
+        if (dst->callee != src->callee || dst->caller != src->caller) *++dst = *src;
+        else if (dst->line != src->line || dst->col != src->col) {
+            warn("%s %s:: %d %d : %d %d", literal_get_name(dst->caller), literal_get_name(dst->callee), dst->line, dst->col, src->line, src->col);
             dst->weight++;
+        }
     }
     cg->calls_size = dst - cg->calls + 1;
 }

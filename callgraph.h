@@ -9,13 +9,16 @@
 
 struct callgraph {
     literal function;
-    literal file;
+    literal fn_file;
+    int fn_line;
+    int fn_col;
     struct hashtable strtab;
 
     struct invokation {
         literal caller;
         literal callee;
         float weight;
+        int line, col;
     } *calls;
     size_t calls_caps;
     size_t calls_size;

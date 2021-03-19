@@ -15,11 +15,13 @@
 
 #define BATCH_SIZE 16
 
-inline static void set_current(struct callgraph *cg, const char *fun, const char *file) {
+inline static void set_current(struct callgraph *cg, const char *fun, const char *file, int line, int col) {
     assert(!cg->function || !fun); // No nested functions allowed
     if (!strncmp(file, "./", 2)) file += 2;
     cg->function = fun ? strtab_put2(&cg->strtab, fun, lf_function) : NULL;
-    cg->file = strtab_put2(&cg->strtab, file, lf_file);
+    cg->fn_file = strtab_put2(&cg->strtab, file, lf_file);
+    cg->fn_line = line;
+    cg->fn_col = col;
 }
 
 inline static void add_function_declaration(struct callgraph *cg, literal id, bool global, bool inline_) {
@@ -29,11 +31,11 @@ inline static void add_function_declaration(struct callgraph *cg, literal id, bo
     }
 }
 
-inline static void add_function_call(struct callgraph *cg, const char *str) {
+inline static void add_function_call(struct callgraph *cg, const char *str, int line, int col) {
     literal id = strtab_put(&cg->strtab, str), fn = cg->function;
     if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
         if (!fn) fn = strtab_put2(&cg->strtab, "<static expr>", lf_function);
-        cg->calls[cg->calls_size++] = (struct invokation) { fn, id, 1.f };
+        cg->calls[cg->calls_size++] = (struct invokation) { fn, id, 1.f, line, col };
     }
 }
 
@@ -41,13 +43,14 @@ inline static void mark_as_definition(struct callgraph *cg, literal func) {
     literal def = cg->defs[cg->defs_size - 1];
     assert(def == func);
     literal_set_flags(func, literal_get_flags(func) | lf_defined);
-    literal_set_file(func, cg->file);
+    literal_set_location(func, cg->fn_file, cg->fn_line, cg->fn_col);
 }
 
 static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData data) {
     struct callgraph *cg = (struct callgraph *)data;
     (void)parent;
 
+    unsigned line, col;
     switch (clang_getCursorKind(cur)) {
     case CXCursor_CompoundStmt:
         if (cg->function)
@@ -61,13 +64,12 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
         bool is_inline = clang_Cursor_isFunctionInlined(cur);
         CXString name = clang_getCursorDisplayName(cur);
         CXFile file;
-        // TODO Store line/column
-        clang_getExpansionLocation(clang_getCursorLocation(cur), &file, NULL, NULL, NULL);
+        clang_getExpansionLocation(clang_getCursorLocation(cur), &file, &line, &col, NULL);
         CXString filename = clang_getFileName(file);
-        set_current(cg, clang_getCString(name), clang_getCString(filename));
+        set_current(cg, clang_getCString(name), clang_getCString(filename), line, col);
         add_function_declaration(cg, cg->function, is_global, is_inline);
         clang_visitChildren(cur, visit, data);
-        set_current(cg, NULL, clang_getCString(filename));
+        set_current(cg, NULL, clang_getCString(filename), 0, 0);
         clang_disposeString(name);
         clang_disposeString(filename);
         return CXChildVisit_Continue;
@@ -79,7 +81,8 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
                 kind == CXCursor_CXXMethod ||
                 kind == CXCursor_FunctionTemplate) {
             CXString fname = clang_getCursorDisplayName(decl);
-            add_function_call(cg, clang_getCString(fname));
+            clang_getExpansionLocation(clang_getCursorLocation(cur), NULL, &line, &col, NULL);
+            add_function_call(cg, clang_getCString(fname), line, col);
             clang_disposeString(fname);
         }
         /* fallthrough */
@@ -221,9 +224,9 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         free(tmp[i]);
     free(tmp);
 
-    dst->file = NULL;
+    dst->fn_file = NULL;
     dst->function = NULL;
-    src->file = NULL;
+    src->fn_file = NULL;
     src->function = NULL;
 
     /* Merge calls vector (just append it) */
@@ -267,7 +270,7 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         for (sdef = ddef + 1; sdef < enddef; sdef++) {
             if (!literal_eq(*ddef, *sdef)) *++ddef = *sdef;
             else if (!literal_get_file(*ddef) && literal_get_file(*sdef))
-                literal_set_file(*ddef, literal_get_file(*sdef));
+                literal_set_location(*ddef, literal_get_file(*sdef), literal_get_line(*sdef), literal_get_column(*sdef));
         }
 
         dst->defs_size = ddef - dst->defs + 1;

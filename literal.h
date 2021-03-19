@@ -24,10 +24,12 @@ void strtab_merge(struct hashtable *restrict dst, struct hashtable *restrict src
 void literal_set_flags(literal lit, enum literal_flags flags);
 enum literal_flags literal_get_flags(literal lit);
 const char *literal_get_name(literal literal);
-void literal_set_file(literal lit, literal file);
 literal literal_get_file(literal lit);
 uint64_t *literal_get_pdata(literal lit);
 bool literal_eq(literal a, literal b);
+void literal_set_location(literal lit, literal file, int line, int col);
+int literal_get_line(literal lit);
+int literal_get_column(literal lit);
 
 #endif
 

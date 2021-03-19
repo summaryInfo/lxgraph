@@ -13,6 +13,8 @@ struct strtab_item {
     literal file;
     uint64_t data;
     enum literal_flags flags;
+    int line;
+    int col;
 };
 
 static bool strtab_item_cmp(const ht_head_t *a, const ht_head_t *b) {
@@ -46,16 +48,26 @@ uint64_t *literal_get_pdata(literal lit) {
     return &lit->data;
 }
 
-void literal_set_file(literal lit, literal file) {
+void literal_set_location(literal lit, literal file, int line, int col) {
     assert(lit);
     assert(file->flags & lf_file);
     assert(lit->flags & lf_function);
     if (lit->file) lit->flags |= lf_dup;
     lit->file = file;
+    lit->line = line;
+    lit->col = col;
 }
 
 literal literal_get_file(literal lit) {
     return lit->file;
+}
+
+int literal_get_line(literal lit) {
+    return lit->line;
+}
+
+int literal_get_column(literal lit) {
+    return lit->col;
 }
 
 literal strtab_put(struct hashtable *ht, const char *str) {
