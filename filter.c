@@ -109,16 +109,9 @@ static void remove_unused(struct callgraph *cg) {
     {
         // Mark every function starting from roots
 
-        // TODO Make this configurable
-        const char *roots[] = {
-            //"main(int, char **)",
-            "main()",
-            "x86_64_start_kernel(char *)",
-            "do_syscall_64(unsigned long, struct pt_regs *)",
-        };
-        for (size_t i = 0; i < sizeof roots/sizeof *roots; i++) {
-            debug("Makring root '%s'", roots[i]);
-            dfs(strtab_put(&cg->strtab, roots[i]), cg->calls, cg->calls + cg->calls_size);
+        for (size_t i = 0; i < config.root_functions.size; i++) {
+            debug("Makring root '%s'", config.root_functions.data[i]);
+            dfs(strtab_put(&cg->strtab, config.root_functions.data[i]), cg->calls, cg->calls + cg->calls_size);
         }
     }
 
@@ -166,24 +159,11 @@ static void collapse_duplicates(struct callgraph *cg) {
 }
 
 void filter_graph(struct callgraph *cg) {
-    // TODO make this configurable
-    const char *file_exclude[] = {
-        "/usr/lib/clang/11.0.0/include/emmintrin.h",
-        "/usr/include/bits/stdlib-bsearch.h",
-        "/usr/include/sys/stat.h",
-        NULL,
-    };
-    for (size_t i = 0; i < sizeof file_exclude/sizeof *file_exclude; i++)
-        filter_file(cg, strtab_put(&cg->strtab, file_exclude[i]));
+    for (size_t i = 0; i < config.exclude_files.size; i++)
+        filter_file(cg, strtab_put(&cg->strtab, config.exclude_files.data[i]));
 
-    // TODO make this configurable
-    const char *function_exclude[] = {
-        "warn(const char *, ...)",
-        "die(const char *, ...)",
-        NULL
-    };
-    for (size_t i = 0; i < sizeof function_exclude/sizeof *function_exclude; i++)
-        filter_function(cg, strtab_put(&cg->strtab, function_exclude[i]));
+    for (size_t i = 0; i < config.exclude_functions.size; i++)
+        filter_function(cg, strtab_put(&cg->strtab, config.exclude_functions.data[i]));
 
     /* Sort by caller name */
     qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
