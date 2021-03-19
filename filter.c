@@ -88,6 +88,11 @@ static void filter_file(struct callgraph *cg, literal file) {
 }
 
 void renew_graph(struct callgraph *cg) {
+    /* Sort by name */
+    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def);
+    /* Sort by caller name */
+    // qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
+
     // Clear marks and build
     // associations between edges
     // and nodes
@@ -109,10 +114,27 @@ static void remove_unused(struct callgraph *cg) {
     {
         // Mark every function starting from roots
 
+        literal *tmp = malloc(config.root_files.size*sizeof *tmp);
+        assert(tmp);
+        for (size_t i = 0; i < config.root_files.size; i++)
+            tmp[i] = strtab_put(&cg->strtab, config.root_files.data[i]);
+        qsort(tmp, config.root_files.size, sizeof *tmp, cmp_def_by_addr);
+        qsort(cg->defs, cg->defs_size, sizeof *cg->defs, cmp_def_by_file);
+
+        for (size_t i = 0, j = 0; j < config.root_files.size; j++) {
+            while (i < cg->defs_size && tmp[j] < literal_get_file(cg->defs[i])) i++;
+            if (i >= cg->defs_size) break;
+            if (tmp[j] == literal_get_file(cg->defs[i]))
+                dfs(cg->defs[i], cg->calls, cg->calls + cg->calls_size);
+        }
+
+        free(tmp);
+
         for (size_t i = 0; i < config.root_functions.size; i++) {
             debug("Makring root '%s'", config.root_functions.data[i]);
             dfs(strtab_put(&cg->strtab, config.root_functions.data[i]), cg->calls, cg->calls + cg->calls_size);
         }
+
     }
 
     debug("Removing unreachable functions");
@@ -142,6 +164,8 @@ static void remove_unused(struct callgraph *cg) {
 
 static void collapse_duplicates(struct callgraph *cg) {
     debug("Collapsing duplicate edges");
+    /* Sort by caller name */
+    qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
     struct invokation *dst = cg->calls, *src = cg->calls + 1;
     struct invokation *end = dst + cg->calls_size;
     int last_line = 0, last_col = 0;
@@ -165,10 +189,6 @@ void filter_graph(struct callgraph *cg) {
     for (size_t i = 0; i < config.exclude_functions.size; i++)
         filter_function(cg, strtab_put(&cg->strtab, config.exclude_functions.data[i]));
 
-    /* Sort by caller name */
-    qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
-    /* Sort by name */
-    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def);
     collapse_duplicates(cg);
     remove_unused(cg);
 

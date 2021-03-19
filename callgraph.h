@@ -37,6 +37,7 @@ void renew_graph(struct callgraph *cg);
 
 
 int cmp_def_by_file(const void *, const void *);
+int cmp_def_by_addr(const void *, const void *);
 int cmp_call_by_callee(const void *, const void *);
 int cmp_call_by_caller(const void *, const void *);
 

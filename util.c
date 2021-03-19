@@ -184,7 +184,7 @@ static void fini_array_option(struct array_option *current) {
 bool set_option(const char *name, const char *value) {
     static struct array_option *current;
     if (name) {
-        debug("Setting option option %s", value);
+        if (value) debug("Setting option %s=\"%s\"", name, value);
         int64_t v;
         if (!strcmp(options[o_log_level].name, name)) {
             if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
@@ -497,8 +497,9 @@ start_from_next_line:
             set_option(buf2, NULL);
             while (!parse_value(&ps, buf1, buf1 + sizeof buf1 - 1, 0))
                 set_option(NULL, buf1);
+        } else {
+            set_option(buf2, buf1);
         }
-        set_option(buf2, buf1);
         skip_spaces(&ps);
     }
 
