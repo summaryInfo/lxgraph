@@ -24,10 +24,10 @@ struct function {
     list_head_t calls;
     int line;
     int16_t column;
-    bool is_definition;
-    bool is_extern;
-    bool is_inline;
-    bool mark;
+    bool is_definition : 1;
+    bool is_extern : 1;
+    bool is_inline : 1;
+    bool mark : 1;
     const char *name;
 };
 
