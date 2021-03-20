@@ -6,6 +6,8 @@
 #include <math.h>
 #include <stdio.h>
 
+#define MAX_WEIGHT 16
+
 void dump_dot(struct callgraph *cg, const char *destpath) {
     FILE *dst = destpath ? fopen(destpath, "w") : stdout;
     if (!dst) {
@@ -13,13 +15,11 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
         return;
     }
 
-    /* Sort by file */
-    renew_graph(cg);
-    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def_by_file);
-
     debug("Writing graph to '%s'...", destpath ? destpath : "<stdout>");
 
     fputs("digraph \"callgraph\" {\n", dst);
+
+    // TODO Make more of these configurable
     fprintf(dst, "\tlayout = \"%s\";\n", "fdp");
     fprintf(dst, "\tsmoothing = \"%s\";\n", "graph_dist");
     fprintf(dst, "\tesep = \"+%u\";\n", 32);
@@ -28,38 +28,50 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     fprintf(dst, "\toutputorder = \"%s\";\n", "edgesfirst");
     fprintf(dst, "\tnode[shape=\"%s\" style=\"%s\" color=\"%s\"]\n", "box", "filled", "white");
 
-    literal old_file = (void *)-1, *firstdef = NULL, *edef = cg->defs + cg->defs_size;
-
     /* Print functions for each file */
-    for (size_t i = 0; i < cg->defs_size; i++) {
-        literal file = literal_get_file(cg->defs[i]);
-        if (old_file != file) {
-            fprintf(dst, "\tsubgraph \"cluster_%s\" {\n", file ? literal_get_name(file) : "<external>");
-            fprintf(dst, "\t\tstyle = \"%s\";\n", "dotted,filled");
-            fprintf(dst, "\t\tcolor = \"%s\";\n", "lightgray");
-            fprintf(dst, "\t\tlabel = \"%s\";\n", file ? literal_get_name(file) : "<external>");
-            old_file = literal_get_file(cg->defs[i]);
-            firstdef = cg->defs + i;
-        }
-        fprintf(dst, "\t\tn%p[label=\"%s\"];\n", (void *)cg->defs[i], literal_get_name(cg->defs[i]));
-        if (i < cg->defs_size && file != literal_get_file(cg->defs[i + 1])) {
-            /* Print edges within current file */
-            for (literal *def = firstdef; def < edef && literal_get_file(*def) == literal_get_file(*firstdef); def++) {
-                struct invokation *it = cg->calls + (*literal_get_pdata(*def) >> 16);
-                for (; it < cg->calls + cg->calls_size && it->caller == *def; it++)
-                    if (literal_get_file(it->caller) == literal_get_file(it->callee))
-                        fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n", (void *)it->caller, (void *)it->callee, MIN(pow(cg->calls[i].weight, 0.6), 20));
+    ht_iter_t itfile = ht_begin(&cg->files);
+    for (ht_head_t *cur; (cur = ht_next(&itfile)); ) {
+        struct file *file = container_of(cur, struct file, head);
+        if (list_is_empty(&file->functions)) continue;
+        fprintf(dst, "\tsubgraph \"cluster_%s\" {\n", file->name);
+        fprintf(dst, "\t\tstyle = \"%s\";\n", "dotted,filled");
+        fprintf(dst, "\t\tcolor = \"%s\";\n", "lightgray");
+        fprintf(dst, "\t\tlabel = \"%s\";\n", file->name);
+
+        list_iter_t itfun = list_begin(&file->functions);
+        for (list_head_t *curfun; (curfun = list_next(&itfun)); ) {
+            struct function *fun = container_of(curfun, struct function, in_file);
+            fprintf(dst, "\t\tn%p[label=\"%s\"];\n", (void *)fun, fun->name);
+
+            list_iter_t itcall = list_begin(&fun->calls);
+            for (list_head_t *curcall; (curcall = list_next(&itcall)); ) {
+                struct call *call = container_of(curcall, struct call, calls);
+                if (call->caller->file != call->callee->file) continue;
+                fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
+                        (void *)call->caller, (void *)call->callee, MIN(pow(call->weight, 0.6), MAX_WEIGHT));
             }
-            fputs("\t}\n", dst);
         }
+        fputs("\t}\n", dst);
     }
 
     /* Print all edges between files */
-    for (size_t i = 0; i < cg->calls_size; i++) {
-        if (literal_get_file(cg->calls[i].caller) != literal_get_file(cg->calls[i].callee))
-            fprintf(dst, "\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
-                (void *)cg->calls[i].caller, (void *)cg->calls[i].callee, MIN(pow(cg->calls[i].weight, 0.6), 20));
+    ht_iter_t itfun = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_next(&itfun)); ) {
+        struct function *fun = container_of(cur, struct function, head);
+        if (!fun->file) {
+            // Built-in functions are not defined anywhere...
+            fprintf(dst, "\t\tn%p[label=\"%s\"];\n", (void *)fun, fun->name);
+        }
+
+        list_iter_t itcall = list_begin(&fun->calls);
+        for (list_head_t *curcall; (curcall = list_next(&itcall)); ) {
+            struct call *call = container_of(curcall, struct call, calls);
+            if (call->caller->file == call->callee->file) continue;
+            fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
+                    (void *)call->caller, (void *)call->callee, MIN(pow(call->weight, 0.6), MAX_WEIGHT));
+        }
     }
+
     fputs("}\n", dst);
 
     debug("Done.");

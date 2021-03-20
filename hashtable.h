@@ -117,7 +117,7 @@ inline static ht_head_t **ht_lookup_ptr(hashtable_t *ht, ht_head_t *elem) {
 
 inline static ht_head_t *ht_insert_hint(hashtable_t *ht, ht_head_t **cand, ht_head_t *elem) {
     ht_head_t *old = *cand;
-    if (!*cand) {
+    if (!old) {
         *cand = elem;
         ht_adjust(ht, 1);
     }

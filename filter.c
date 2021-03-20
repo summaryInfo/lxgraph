@@ -5,192 +5,139 @@
 
 #include <stdio.h>
 
-static int cmp_def(const void *a, const void *b) {
-    literal alit = *(literal *)a;
-    literal blit = *(literal *)b;
-    if (alit < blit) return -1;
-    else return (alit > blit);
-}
-
-static int cmp_call(const void *a, const void *b) {
-    const struct invokation *ia = (const struct invokation *)a;
-    const struct invokation *ib = (const struct invokation *)b;
-    if (ia->caller < ib->caller) return -1;
-    if (ia->caller > ib->caller) return 1;
-    if (ia->callee < ib->callee) return -1;
-    if (ia->callee > ib->callee) return 1;
-    if (ia->line < ib->line) return -1;
-    if (ia->line > ib->line) return 1;
-    if (ia->col < ib->col) return -1;
-    if (ia->col > ib->col) return 1;
-    return 0;
-}
-
-static void dfs(literal root, struct invokation *calls, struct invokation *end) {
-    uint64_t *ptr = literal_get_pdata(root);
-    struct invokation *it = calls + (*ptr >> 16);
-    if (*ptr & 1) return;
-    *ptr |= 1;
-    for (; it < end && it->caller == root; it++)
-        dfs(it->callee, calls, end);
-}
-
-static void filter_function(struct callgraph *cg, literal fun) {
-    debug("Excluding function '%s'", fun ? literal_get_name(fun) : "<NULL>");
-    {
-        // Remove edges
-        struct invokation *dst = cg->calls, *src = cg->calls;
-        struct invokation *end = dst + cg->calls_size;
-        for (; src < end; src++) {
-            if (src->callee != fun && src->caller != fun)
-                *dst++ = *src;
-        }
-        cg->calls_size = dst - cg->calls;
-    }
-
-    {
-        // Remove functions
-        literal *dst = cg->defs, *src = cg->defs;
-        literal *end = dst + cg->defs_size;
-        for (; src < end; src++) {
-            if (*src != fun)
-                *dst++ = *src;
-        }
-        cg->defs_size = dst - cg->defs;
+void clear_marks(struct callgraph *cg) {
+    ht_iter_t it = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_next(&it)); ) {
+        struct function *function = container_of(cur, struct function, head);
+        function->mark = 0;
     }
 }
 
-static void filter_file(struct callgraph *cg, literal file) {
-    debug("Excluding file '%s'", file ? literal_get_name(file) : "<NULL>");
-    {
-        // Remove edges
-        struct invokation *dst = cg->calls, *src = cg->calls;
-        struct invokation *end = dst + cg->calls_size;
-        for (; src < end; src++) {
-            if (literal_get_file(src->callee) != file &&
-                    literal_get_file(src->caller) != file)
-                *dst++ = *src;
-        }
-        cg->calls_size = dst - cg->calls;
+static void exclude_exceptions(struct callgraph *cg) {
+    for (size_t i = 0; i < config.exclude_files.size; i++) {
+        struct file *file = find_file(cg, config.exclude_files.data[i]);
+        if (!file) continue;
+
+        debug("Excluding file '%s'", file ? file->name : "<NULL>");
+        erase_file(cg, file);
     }
 
-    {
-        // Remove functions
-        literal *dst = cg->defs, *src = cg->defs;
-        literal *end = dst + cg->defs_size;
-        for (; src < end; src++) {
-            if (literal_get_file(*src) != file)
-                *dst++ = *src;
-            else debug("    Removed '%s'", literal_get_name(*src));
-        }
-        cg->defs_size = dst - cg->defs;
+    for (size_t i = 0; i < config.exclude_functions.size; i++) {
+        struct function *function = find_function(cg, config.exclude_functions.data[i]);
+        if (!function) continue;
+
+        debug("Excluding function '%s'", function ? function->name : "<NULL>");
+        erase_function(cg, function);
     }
 }
 
-void renew_graph(struct callgraph *cg) {
-    /* Sort by name */
-    qsort(cg->defs, cg->defs_size, sizeof cg->defs[0], cmp_def);
-    /* Sort by caller name */
-    // qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
-
-    // Clear marks and build
-    // associations between edges
-    // and nodes
-    size_t i = 0, j = 0;
-    while (j < cg->calls_size) {
-        while (i < cg->defs_size && cg->calls[j].caller != cg->defs[i])
-            *literal_get_pdata(cg->defs[i++]) = 0;
-        if (i == cg->defs_size) break;
-        *literal_get_pdata(cg->defs[i++]) = j++ << 16;
-        while (j < cg->calls_size &&
-               cg->calls[j].caller == cg->calls[j - 1].caller) j++;
+static void dfs(struct function *root) {
+    if (root->mark) return;
+    root->mark = 1;
+    list_iter_t it = list_begin(&root->calls);
+    for (list_head_t *cur; (cur = list_next(&it)); ) {
+        struct call *edge = container_of(cur, struct call, calls);
+        dfs(edge->callee);
     }
-    while (i < cg->defs_size)
-        *literal_get_pdata(cg->defs[i++]) = 0;
 }
 
 static void remove_unused(struct callgraph *cg) {
-    renew_graph(cg);
-    {
-        // Mark every function starting from roots
+    /* Mark every function starting from roots */
 
-        literal *tmp = malloc(config.root_files.size*sizeof *tmp);
-        assert(tmp);
-        for (size_t i = 0; i < config.root_files.size; i++)
-            tmp[i] = strtab_put(&cg->strtab, config.root_files.data[i]);
-        qsort(tmp, config.root_files.size, sizeof *tmp, cmp_def_by_addr);
-        qsort(cg->defs, cg->defs_size, sizeof *cg->defs, cmp_def_by_file);
-
-        for (size_t i = 0, j = 0; j < config.root_files.size; j++) {
-            while (i < cg->defs_size && tmp[j] < literal_get_file(cg->defs[i])) i++;
-            if (i >= cg->defs_size) break;
-            if (tmp[j] == literal_get_file(cg->defs[i]))
-                dfs(cg->defs[i], cg->calls, cg->calls + cg->calls_size);
+    for (size_t i = 0; i < config.root_files.size; i++) {
+        struct file *file = find_file(cg, config.root_files.data[i]);
+        if (file) {
+            list_iter_t it = list_begin(&file->functions);
+            for (list_head_t *cur; (cur = list_next(&it)); ) {
+                struct function *fun = container_of(cur, struct function, in_file);
+                debug("Makring root '%s'", fun->name);
+                dfs(fun);
+            }
         }
-
-        free(tmp);
-
-        for (size_t i = 0; i < config.root_functions.size; i++) {
-            debug("Makring root '%s'", config.root_functions.data[i]);
-            dfs(strtab_put(&cg->strtab, config.root_functions.data[i]), cg->calls, cg->calls + cg->calls_size);
-        }
-
     }
 
-    debug("Removing unreachable functions");
-
-    {
-        // Remove unreachable edges
-        struct invokation *dst = cg->calls, *src = cg->calls;
-        struct invokation *end = dst + cg->calls_size;
-        for (; src < end; src++) {
-            if (*literal_get_pdata(src->caller) & 1)
-                *dst++ = *src;
+    for (size_t i = 0; i < config.root_functions.size; i++) {
+        struct function *fun = find_function(cg, config.root_functions.data[i]);
+        if (fun) {
+            debug("Makring root '%s'", fun->name);
+            dfs(fun);
         }
-        cg->calls_size = dst - cg->calls;
     }
 
-    {
-        // Remove unreachable functions
-        literal *dst = cg->defs, *src = cg->defs;
-        literal *end = dst + cg->defs_size;
-        for (; src < end; src++) {
-            if (*literal_get_pdata(*src) & 1) *dst++ = *src;
-            else debug("Removing unused function '%s'", literal_get_name(*src));
+    debug("Removing unreachable functions...");
+
+    ht_iter_t it = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_current(&it)); ) {
+        struct function *fun = container_of(cur, struct function, head);
+        if (!fun->mark) {
+            ht_erase_current(&it);
+            erase_function(cg, fun);
+        } else {
+            ht_next(&it);
         }
-        cg->defs_size = dst - cg->defs;
     }
+}
+
+static int cmp_call(const void *a, const void *b) {
+    struct call *call_a = (*(struct call **)a);
+    struct call *call_b = (*(struct call **)b);
+
+    if (call_a->callee < call_b->callee) return -1;
+    if (call_a->callee > call_b->callee) return 1;
+
+    // Just compare files by address, they are unique
+    if (call_a->caller->file < call_b->caller->file) return -1;
+    if (call_a->caller->file > call_b->caller->file) return 1;
+
+    if (call_a->line < call_b->line) return -1;
+    if (call_a->line > call_b->line) return 1;
+
+    if (call_a->column < call_b->column) return -1;
+    if (call_a->column > call_b->column) return 1;
+
+    return 0;
 }
 
 static void collapse_duplicates(struct callgraph *cg) {
-    debug("Collapsing duplicate edges");
-    /* Sort by caller name */
-    qsort(cg->calls, cg->calls_size, sizeof cg->calls[0], cmp_call);
-    struct invokation *dst = cg->calls, *src = cg->calls + 1;
-    struct invokation *end = dst + cg->calls_size;
-    int last_line = 0, last_col = 0;
-    for (; src < end; src++) {
-        if (dst->callee != src->callee || dst->caller != src->caller) {
-            *++dst = *src;
-            last_line = 0;
-            last_col = 0;
-        } else if (last_line != src->line || last_col != src->col) {
-            last_line = src->line, last_col = src->col;
-            dst->weight++;
+    struct call **buffer = NULL;
+    size_t bufsize = 0, bufcaps = 0;
+
+    debug("Collapsing duplicate edges...");
+    ht_iter_t it = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_next(&it)); ) {
+        struct function *fun = container_of(cur, struct function, head);
+        bufsize = 0;
+
+        /* Add all edges to temporary buffer */
+        list_iter_t edge = list_begin(&fun->calls);
+        for (list_head_t *curcall; (curcall = list_next(&edge)); ) {
+            struct call *call = container_of(curcall, struct call, calls);
+            bool res = adjust_buffer((void **)&buffer, &bufcaps, bufsize + 1, sizeof *buffer);
+            assert(res);
+            buffer[bufsize++] = call;
+        }
+
+        if (!bufsize) continue;
+
+        /* Sort them by source location: callee-file-function-line-column */
+        qsort(buffer, bufsize, sizeof *buffer, cmp_call);
+
+        /* And remove duplicates linearally */
+        for (size_t i = 1; i < bufsize; i++) {
+            if (!cmp_call(&buffer[i - 1], &buffer[i]))
+                erase_call(buffer[i - 1]);
+            else if (buffer[i -1]->callee == buffer[i]->callee) {
+                buffer[i]->weight += buffer[i - 1]->weight;
+                erase_call(buffer[i - 1]);
+            }
         }
     }
-    cg->calls_size = dst - cg->calls + 1;
+    free(buffer);
 }
 
 void filter_graph(struct callgraph *cg) {
-    for (size_t i = 0; i < config.exclude_files.size; i++)
-        filter_file(cg, strtab_put(&cg->strtab, config.exclude_files.data[i]));
-
-    for (size_t i = 0; i < config.exclude_functions.size; i++)
-        filter_function(cg, strtab_put(&cg->strtab, config.exclude_functions.data[i]));
-
+    clear_marks(cg);
+    exclude_exceptions(cg);
     collapse_duplicates(cg);
     remove_unused(cg);
-
-    renew_graph(cg);
 }

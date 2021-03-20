@@ -15,64 +15,125 @@
 
 #define BATCH_SIZE 16
 
-inline static void set_current(struct callgraph *cg, const char *fun, const char *file, int line, int col) {
-    assert(!cg->function || !fun); // No nested functions allowed
+struct parse_context {
+    struct callgraph *callgraph;
+    struct function *current;
+};
+
+static struct file *add_file(struct callgraph *cg, const char *file) {
     if (!strncmp(file, "./", 2)) file += 2;
-    cg->function = fun ? strtab_put2(&cg->strtab, fun, lf_function) : NULL;
-    cg->fn_file = strtab_put2(&cg->strtab, file, lf_file);
-    cg->fn_line = line;
-    cg->fn_col = col;
+
+    size_t len = strlen(file);
+    struct file dummy = { .head.hash = hash64(file, len), .name = file };
+    ht_head_t **h = ht_lookup_ptr(&cg->files, &dummy.head);
+    if (*h) return container_of(*h, struct file, head);
+
+    struct file *new = calloc(1, sizeof *new + len + 1);
+    memcpy(new + 1, file, len + 1);
+    new->name = (char *)(new + 1);
+    new->head = dummy.head;
+    list_init(&new->functions);
+
+    ht_insert_hint(&cg->files, h, &new->head);
+    return new;
 }
 
-inline static void add_function_declaration(struct callgraph *cg, literal id, bool global, bool inline_) {
-    if (adjust_buffer((void **)&cg->defs, &cg->defs_caps, cg->defs_size + 1, sizeof *cg->defs)) {
-        cg->defs[cg->defs_size++] = id;
-        literal_set_flags(id, lf_function | (global ? lf_global : 0) | (inline_ ? lf_inline : 0));
+static struct function *add_function_ref(struct callgraph *cg, const char *function) {
+    size_t len = strlen(function);
+    struct function dummy = { .head.hash = hash64(function, len), .name = function };
+    ht_head_t **h = ht_lookup_ptr(&cg->functions, &dummy.head);
+    if (*h) return container_of(*h, struct function, head);
+
+    struct function *new = calloc(1, sizeof *new + len + 1);
+    memcpy(new + 1, function, len + 1);
+    new->name = (char *)(new + 1);
+    new->head = dummy.head;
+    list_init(&new->calls);
+    list_init(&new->called);
+    list_init(&new->in_file);
+
+    ht_insert_hint(&cg->functions, h, &new->head);
+    return new;
+}
+
+static struct function *add_function(struct callgraph *cg, struct file *file, const char *function,
+                                     int line, int col, bool is_extern, bool is_inline) {
+    size_t len = strlen(function);
+    struct function dummy = { .head.hash = hash64(function, len), .name = function };
+    ht_head_t **h = ht_lookup_ptr(&cg->functions, &dummy.head);
+    if (*h) {
+        struct function *fn = container_of(*h, struct function, head);
+        if (!fn->file) {
+            list_append(&file->functions, &fn->in_file);
+            fn->file = file;
+            fn->line = line;
+            fn->column = col;
+            fn->is_extern = is_extern;
+            fn->is_inline = is_inline;
+        }
+        return fn;
     }
+
+    struct function *new = calloc(1, sizeof *new + len + 1);
+    memcpy(new + 1, function, len + 1);
+    new->name = (char *)(new + 1);
+    new->head = dummy.head;
+    list_init(&new->calls);
+    list_init(&new->called);
+    list_append(&file->functions, &new->in_file);
+    new->file = file;
+    new->line = line;
+    new->column = col;
+    new->is_extern = is_extern;
+    new->is_inline = is_inline;
+
+    ht_insert_hint(&cg->functions, h, &new->head);
+
+    return new;
 }
 
-inline static void add_function_call(struct callgraph *cg, const char *str, int line, int col) {
-    literal id = strtab_put(&cg->strtab, str), fn = cg->function;
-    if (adjust_buffer((void **)&cg->calls, &cg->calls_caps, cg->calls_size + 1, sizeof *cg->calls)) {
-        if (!fn) fn = strtab_put2(&cg->strtab, "<static expr>", lf_function);
-        cg->calls[cg->calls_size++] = (struct invokation) { fn, id, 1.f, line, col };
-    }
-}
-
-inline static void mark_as_definition(struct callgraph *cg, literal func) {
-    literal def = cg->defs[cg->defs_size - 1];
-    assert(def == func);
-    literal_set_flags(func, literal_get_flags(func) | lf_defined);
-    literal_set_location(func, cg->fn_file, cg->fn_line, cg->fn_col);
+inline static void add_function_call(struct function *from, struct function *to, int line, int col) {
+    struct call *new = malloc(sizeof *new);
+    list_append(&from->calls, &new->calls);
+    list_append(&to->called, &new->called);
+    new->caller = from;
+    new->callee = to;
+    new->weight = 1.;
+    new->line = line;
+    new->column = col;
 }
 
 static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData data) {
-    struct callgraph *cg = (struct callgraph *)data;
+    struct parse_context *context = (struct parse_context *)data;
     (void)parent;
 
     unsigned line, col;
     switch (clang_getCursorKind(cur)) {
     case CXCursor_CompoundStmt:
-        if (cg->function)
-            mark_as_definition(cg, cg->function);
+        if (context->current)
+            context->current->is_definition = 1;
         break;
     case CXCursor_FunctionDecl:
     case CXCursor_CXXMethod:
     case CXCursor_FunctionTemplate:;
-        if (cg->function) break;
-        bool is_global =  clang_Cursor_getStorageClass(cur) != CX_SC_Extern;
+        bool is_extern =  clang_Cursor_getStorageClass(cur) != CX_SC_Extern;
         bool is_inline = clang_Cursor_isFunctionInlined(cur);
         CXString name = clang_getCursorDisplayName(cur);
-        CXFile file;
-        clang_getExpansionLocation(clang_getCursorLocation(cur), &file, &line, &col, NULL);
-        CXString filename = clang_getFileName(file);
-        set_current(cg, clang_getCString(name), clang_getCString(filename), line, col);
-        add_function_declaration(cg, cg->function, is_global, is_inline);
-        clang_visitChildren(cur, visit, data);
-        set_current(cg, NULL, clang_getCString(filename), 0, 0);
+        CXFile cfile;
+        clang_getExpansionLocation(clang_getCursorLocation(cur), &cfile, &line, &col, NULL);
+        CXString filename = clang_getFileName(cfile);
+        struct file *file = add_file(context->callgraph, clang_getCString(filename));
+        struct function *newfn = add_function(context->callgraph, file,
+                clang_getCString(name), line, col, is_extern, is_inline);
         clang_disposeString(name);
         clang_disposeString(filename);
-        return CXChildVisit_Continue;
+        if (!context->current) {
+            context->current = newfn;
+            clang_visitChildren(cur, visit, data);
+            context->current = NULL;
+            return CXChildVisit_Continue;
+        }
+        break;
     case CXCursor_DeclRefExpr:
     case CXCursor_MemberRefExpr:;
         CXCursor decl = clang_getCursorReferenced(cur);
@@ -82,8 +143,14 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
                 kind == CXCursor_FunctionTemplate) {
             CXString fname = clang_getCursorDisplayName(decl);
             clang_getExpansionLocation(clang_getCursorLocation(cur), NULL, &line, &col, NULL);
-            add_function_call(cg, clang_getCString(fname), line, col);
+            struct function *fn = add_function_ref(context->callgraph, clang_getCString(fname));
             clang_disposeString(fname);
+            if (!context->current) {
+                // TODO Static initiallization...
+                break;
+            }
+            assert(context->current);
+            add_function_call(context->current, fn, line, col);
         }
         /* fallthrough */
     default:
@@ -93,9 +160,15 @@ static enum CXChildVisitResult visit(CXCursor cur, CXCursor parent, CXClientData
 }
 
 void free_callgraph(struct callgraph *cg) {
-    fini_strtab(&cg->strtab);
-    free(cg->defs);
-    free(cg->calls);
+    ht_iter_t itfile = ht_begin(&cg->files);
+    for (ht_head_t *cur; (cur = ht_erase_current(&itfile));)
+        erase_file(cg, container_of(cur, struct file, head));
+    ht_free(&cg->files);
+
+    ht_iter_t itfun = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_erase_current(&itfun));)
+        erase_function(cg, container_of(cur, struct function, head));
+    ht_free(&cg->functions);
     free(cg);
 }
 
@@ -108,7 +181,7 @@ struct arg {
 
 static void do_parse(int thread_index, void *varg) {
     struct arg *arg = varg;
-    struct callgraph *cg = arg->pres[thread_index];
+    struct parse_context context = { arg->pres[thread_index], NULL };
 
     CXIndex index = clang_createIndex(1, config.log_level > 1);
 
@@ -123,6 +196,7 @@ static void do_parse(int thread_index, void *varg) {
             syncdebug("Parsing file %zd '%s'", i, clang_getCString(file));
             clang_disposeString(file);
         }
+        // TODO Additional args for compilation?
         size_t nargs = clang_CompileCommand_getNumArgs(cmd);
         CXString args[nargs];
         const char *cargs[nargs];
@@ -141,154 +215,62 @@ static void do_parse(int thread_index, void *varg) {
         }
 
         CXCursor cur = clang_getTranslationUnitCursor(unit);
-        clang_visitChildren(cur, visit, (CXClientData)cg);
+        clang_visitChildren(cur, visit, (CXClientData)&context);
         clang_disposeTranslationUnit(unit);
     }
 
     clang_disposeIndex(index);
 }
 
-int cmp_def_by_file(const void *a, const void *b) {
-    literal da = *(literal *)a, db = *(literal *)b;
-    literal fa = literal_get_file(da), fb = literal_get_file(db);
-    // May be I should sort by actual string to make locations persistent?
-    if (fa < fb) return -1;
-    else if (fa > fb) return 1;
-    if (da < db) return -1;
-    return (da > db);
-}
-
-int cmp_def_by_addr(const void *a, const void *b) {
-    literal da = *(literal *)a, db = *(literal *)b;
-    literal fa = literal_get_file(da), fb = literal_get_file(db);
-    if (da < db) return -1;
-    else if (da > db) return 1;
-    if (fa < fb) return -1;
-    return (fa > fb);
-}
-
-int cmp_call_by_caller(const void *a, const void *b) {
-    const struct invokation *ia = (const struct invokation *)a;
-    const struct invokation *ib = (const struct invokation *)b;
-    if (ia->caller < ib->caller) return -1;
-    if (ia->caller > ib->caller) return 1;
-    if (ia->callee < ib->callee) return -1;
-    return (ia->callee > ib->callee);
-}
-
-int cmp_call_by_callee(const void *a, const void *b) {
-    const struct invokation *ia = (const struct invokation *)a;
-    const struct invokation *ib = (const struct invokation *)b;
-    if (ia->callee < ib->callee) return -1;
-    if (ia->callee > ib->callee) return 1;
-    if (ia->caller < ib->caller) return -1;
-    return (ia->caller > ib->caller);
-}
-
 static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
-    /* Move string table */
-
-    strtab_merge(&dst->strtab, &src->strtab);
-    size_t size = src->strtab.size;
-    literal *tmp = malloc(size*sizeof *tmp);
-    ht_iter_t it = ht_begin(&src->strtab);
-    for (literal *ptr = tmp; ht_current(&it); ptr++)
-        *ptr = (literal)ht_erase_current(&it);
-    qsort(tmp, size, sizeof *tmp, cmp_def_by_addr);
-
-    if (src->calls && size) {
-        qsort(src->calls, src->calls_size, sizeof *src->calls, cmp_call_by_callee);
-        struct invokation *it1 = src->calls, *it1_end = src->calls + src->calls_size;
-        for (literal *it2 = tmp; it1 < it1_end; it1++) {
-            while (it2 < tmp + size && *it2 < it1->callee) it2++;
-            if (it2 >= tmp + size) break;
-            if (*it2 == it1->callee) it1->callee = literal_get_file(*it2);
+    /* Just add all information from one source
+     * to another, it takes linear time */
+    ht_iter_t itfun = ht_begin(&src->functions);
+    for (ht_head_t *cur; (cur = ht_next(&itfun)); ) {
+        struct function *sfun = container_of(cur, struct function, head);
+        struct function *dfun = add_function_ref(dst, sfun->name);
+        /* Collect missing information to dst */
+        if (!dfun->file && sfun->file) {
+            dfun->file = add_file(dst, sfun->file->name);
+            list_append(&dfun->file->functions, &dfun->in_file);
+            dfun->line = sfun->line;
+            dfun->column = sfun->column;
+            dfun->is_definition = sfun->is_definition;
+            dfun->is_inline = sfun->is_inline;
+            dfun->is_extern = sfun->is_extern;
         }
-
-        qsort(src->calls, src->calls_size, sizeof *src->calls, cmp_call_by_caller);
-        it1 = src->calls, it1_end = src->calls + src->calls_size;
-        for (literal *it2 = tmp; it1 < it1_end; it1++) {
-            while (it2 < tmp + size && *it2 < it1->caller) it2++;
-            if (it2 >= tmp + size) break;
-            if (*it2 == it1->caller) it1->caller = literal_get_file(*it2);
-        }
-    }
-
-    if (src->defs && size) {
-        qsort(src->defs, src->defs_size, sizeof *src->defs, cmp_def_by_addr);
-        literal *it3 = src->defs, *it3_end = src->defs + src->defs_size;
-        for (literal *it2 = tmp; it3 < it3_end; it3++) {
-            while (it2 < tmp + size && *it2 < *it3) it2++;
-            if (it2 >= tmp + size) break;
-            if (*it2 == *it3) *it3 = literal_get_file(*it2);
+        /* Collect missing edges to dst */
+        /* We only need to iterate through calls list,
+         * but not through called list, because if element
+         * is in one list it will be in the other list for some function
+         * NOTE: Edges for inline functions from header files
+         * into multiple source files are duplicated and fileterd
+         * later in filter.c, collapse_duplicates() */
+        list_iter_t it = list_begin(&sfun->calls);
+        for (list_head_t *curcall; (curcall = list_next(&it)); ) {
+            struct call *call = container_of(curcall, struct call, calls);
+            struct function *to = add_function_ref(dst, call->callee->name);
+            add_function_call(dfun, to, call->line, call->column);
         }
     }
-
-    for (size_t i = 0; i < size; i++)
-        free(tmp[i]);
-    free(tmp);
-
-    dst->fn_file = NULL;
-    dst->function = NULL;
-    src->fn_file = NULL;
-    src->function = NULL;
-
-    /* Merge calls vector (just append it) */
-    if (!dst->calls_size) {
-        dst->calls = src->calls;
-        dst->calls_size = src->calls_size;
-        dst->calls_caps = src->calls_caps;
-    } else if (src->calls_size) {
-        bool res = adjust_buffer((void **)&dst->calls, &dst->calls_caps,
-                                 dst->calls_size + src->calls_size, sizeof *dst->calls);
-        assert(res);
-        memcpy(dst->calls + dst->calls_size, src->calls, src->calls_size * sizeof *dst->calls);
-        dst->calls_size += src->calls_size;
-        free(src->calls);
-    }
-    src->calls_caps = 0;
-    src->calls_size = 0;
-    src->calls = NULL;
-
-    /* Merge definitions vector (append, then deduplicate) */
-
-    if (!dst->defs_size) {
-        dst->defs = src->defs;
-        dst->defs_size = src->defs_size;
-        dst->defs_caps = src->defs_caps;
-    } else {
-        if (src->defs_size) {
-            bool res = adjust_buffer((void **)&dst->defs, &dst->defs_caps,
-                                     dst->defs_size + src->defs_size, sizeof *dst->defs);
-            assert(res);
-            memcpy(dst->defs + dst->defs_size, src->defs, src->defs_size * sizeof *dst->defs);
-            dst->defs_size += src->defs_size;
-            free(src->defs);
-        }
-
-        /* O(nlogn) sort */
-        qsort(dst->defs, dst->defs_size, sizeof *dst->defs, cmp_def_by_file);
-
-        /* O(n) deduplication */
-        literal *ddef = dst->defs, *sdef, *enddef = dst->defs + dst->defs_size;
-        for (sdef = ddef + 1; sdef < enddef; sdef++) {
-            if (!literal_eq(*ddef, *sdef)) *++ddef = *sdef;
-            else if (!literal_get_file(*ddef) && literal_get_file(*sdef))
-                literal_set_location(*ddef, literal_get_file(*sdef), literal_get_line(*sdef), literal_get_column(*sdef));
-        }
-
-        dst->defs_size = ddef - dst->defs + 1;
-    }
-
-    src->defs_caps = 0;
-    src->defs_size = 0;
-    src->defs = NULL;
 }
 
 struct merge_arg {
     struct callgraph *dst;
     struct callgraph *src;
 };
+
+static bool eq_file(const ht_head_t *a, const ht_head_t *b) {
+    const struct file *af = container_of(a, const struct file, head);
+    const struct file *bf = container_of(b, const struct file, head);
+    return !strcmp(af->name, bf->name);
+}
+
+static bool eq_function(const ht_head_t *a, const ht_head_t *b) {
+    const struct function *af = container_of(a, const struct function, head);
+    const struct function *bf = container_of(b, const struct function, head);
+    return !strcmp(af->name, bf->name);
+}
 
 static void do_merge_parallel(int thread_index, void *varg) {
     struct merge_arg *arg = varg;
@@ -301,7 +283,8 @@ struct callgraph *parse_directory(const char *path) {
     struct callgraph *cgparts[nproc];
     for (ssize_t i = 0; i < nproc; i++) {
         cgparts[i] = calloc(1, sizeof *cgparts[0]);
-        init_strtab(&cgparts[i]->strtab);
+        ht_init(&cgparts[i]->functions, HT_INIT_CAPS, eq_function);
+        ht_init(&cgparts[i]->files, HT_INIT_CAPS, eq_file);
     }
 
     CXCompilationDatabase_Error err = CXCompilationDatabase_NoError;
@@ -312,7 +295,7 @@ struct callgraph *parse_directory(const char *path) {
     }
 
     char buf[PATH_MAX + 1];
-    char *res = getcwd(buf, sizeof buf -1);
+    char *res = getcwd(buf, sizeof buf - 1);
     CXCompileCommands ccmds = clang_CompilationDatabase_getAllCompileCommands(cdb);
 
     ssize_t ncmds = clang_CompileCommands_getSize(ccmds);
@@ -327,21 +310,16 @@ struct callgraph *parse_directory(const char *path) {
     }
     drain_work();
 
-    if (nproc == 1) {
-        qsort(cgparts[0]->defs, cgparts[0]->defs_size,
-              sizeof *cgparts[0]->defs, cmp_def_by_file);
-    } else {
-        size_t n = nproc;
-        while (n > 1) {
-            size_t cnt = n/2, off = (n+1)/2;
-            do {
-                debug("Merging %zd into %zd", cnt + off - 1, cnt - 1);
-                struct merge_arg arg = { cgparts[cnt - 1], cgparts[cnt + off - 1] };
-                submit_work(do_merge_parallel, &arg, sizeof arg);
-            } while (--cnt > 0);
-            drain_work();
-            n = off;
-        }
+    size_t n = nproc;
+    while (n > 1) {
+        size_t cnt = n/2, off = (n+1)/2;
+        do {
+            debug("Merging %zd into %zd", cnt + off - 1, cnt - 1);
+            struct merge_arg arg = { cgparts[cnt - 1], cgparts[cnt + off - 1] };
+            submit_work(do_merge_parallel, &arg, sizeof arg);
+        } while (--cnt > 0);
+        drain_work();
+        n = off;
     }
 
     clang_CompileCommands_dispose(ccmds);
