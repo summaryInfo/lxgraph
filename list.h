@@ -1,3 +1,5 @@
+/* Copyright (c) 2021, Evgeny Baskov. All rights reserved */
+
 #ifndef LIST_H_
 #define LIST_H_ 1
 
