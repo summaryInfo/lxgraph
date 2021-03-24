@@ -98,41 +98,103 @@ static int cmp_call(const void *a, const void *b) {
     return 0;
 }
 
-static void collapse_duplicates(struct callgraph *cg) {
-    struct call **buffer = NULL;
-    size_t bufsize = 0, bufcaps = 0;
+static int cmp_dep(const void *a, const void *b) {
+    struct call *call_a = (*(struct call **)a);
+    struct call *call_b = (*(struct call **)b);
 
+    if (call_a->to_file < call_b->to_file) return -1;
+    if (call_a->to_file > call_b->to_file) return 1;
+
+    // Just compare files by address, they are unique
+    if (call_a->from_file < call_b->from_file) return -1;
+    if (call_a->from_file > call_b->from_file) return 1;
+    return 0;
+}
+
+static void collapse_one_entry(list_iter_t edge, int (*cmp)(const void *, const void *)) {
+    static struct call **buffer = NULL;
+    static size_t bufsize = 0, bufcaps = 0;
+
+    if (!cmp) {
+        free(buffer);
+        bufcaps = 0;
+        buffer = NULL;
+        return;
+    }
+
+    bufsize = 0;
+
+    /* Add all edges to temporary buffer */
+    for (list_head_t *curcall; (curcall = list_next(&edge)); ) {
+        struct call *call = container_of(curcall, struct call, calls);
+        bool res = adjust_buffer((void **)&buffer, &bufcaps, bufsize + 1, sizeof *buffer);
+        assert(res);
+        buffer[bufsize++] = call;
+    }
+
+    if (!bufsize) return;
+
+    /* Sort them by source location: callee-file-function-line-column */
+    qsort(buffer, bufsize, sizeof *buffer, cmp);
+
+    /* And remove duplicates linearally */
+    for (size_t i = 1; i < bufsize; i++) {
+        if (!cmp_call(&buffer[i - 1], &buffer[i]))
+            erase_call(buffer[i - 1]);
+        else if (buffer[i -1]->callee == buffer[i]->callee) {
+            buffer[i]->weight += buffer[i - 1]->weight;
+            erase_call(buffer[i - 1]);
+        }
+    }
+}
+
+static void collapse_duplicates(struct callgraph *cg) {
     debug("Collapsing duplicate edges...");
     ht_iter_t it = ht_begin(&cg->functions);
     for (ht_head_t *cur; (cur = ht_next(&it)); ) {
         struct function *fun = container_of(cur, struct function, head);
-        bufsize = 0;
+        collapse_one_entry(list_begin(&fun->calls), cmp_call);
+    }
+    collapse_one_entry((list_iter_t){ 0 }, NULL);
+}
 
-        /* Add all edges to temporary buffer */
-        list_iter_t edge = list_begin(&fun->calls);
-        for (list_head_t *curcall; (curcall = list_next(&edge)); ) {
-            struct call *call = container_of(curcall, struct call, calls);
-            bool res = adjust_buffer((void **)&buffer, &bufcaps, bufsize + 1, sizeof *buffer);
-            assert(res);
-            buffer[bufsize++] = call;
-        }
 
-        if (!bufsize) continue;
+static void collapse_file_duplicates(struct callgraph *cg) {
+    debug("Collapsing duplicate edges for files...");
+    ht_iter_t it = ht_begin(&cg->files);
+    for (ht_head_t *cur; (cur = ht_next(&it)); ) {
+        struct file *file = container_of(cur, struct file, head);
+        collapse_one_entry(list_begin(&file->calls), cmp_dep);
+    }
+    collapse_one_entry((list_iter_t){ 0 }, NULL);
+}
 
-        /* Sort them by source location: callee-file-function-line-column */
-        qsort(buffer, bufsize, sizeof *buffer, cmp_call);
 
-        /* And remove duplicates linearally */
-        for (size_t i = 1; i < bufsize; i++) {
-            if (!cmp_call(&buffer[i - 1], &buffer[i]))
-                erase_call(buffer[i - 1]);
-            else if (buffer[i -1]->callee == buffer[i]->callee) {
-                buffer[i]->weight += buffer[i - 1]->weight;
-                erase_call(buffer[i - 1]);
+inline static void add_file_edge(struct file *from, struct file *to, float weight) {
+    struct call *new = malloc(sizeof *new);
+    list_append(&from->calls, &new->calls);
+    list_append(&to->called, &new->called);
+    new->from_file = from;
+    new->to_file = to;
+    new->weight = weight;
+}
+
+static void condence_file_graph(struct callgraph *cg) {
+    debug("Collapsing function nodes...");
+    ht_iter_t it = ht_begin(&cg->files);
+    for (ht_head_t *cur; (cur = ht_next(&it)); ) {
+        struct file *file = container_of(cur, struct file, head);
+        list_iter_t itfun = list_begin(&file->functions);
+        for (list_head_t *curfun; (curfun = list_next(&itfun)); ) {
+            struct function *fun = container_of(curfun, struct function, in_file);
+            list_iter_t itcall = list_begin(&fun->calls);
+            for (list_head_t *curcall; (curcall = list_next(&itcall)); ) {
+                struct call *call = container_of(curcall, struct call, calls);
+                if (call->callee->file != file && call->callee->file)
+                    add_file_edge(file, call->callee->file, call->weight);
             }
         }
     }
-    free(buffer);
 }
 
 void filter_graph(struct callgraph *cg) {
@@ -140,4 +202,9 @@ void filter_graph(struct callgraph *cg) {
     exclude_exceptions(cg);
     collapse_duplicates(cg);
     remove_unused(cg);
+
+    if (config.level_of_details == lod_file) {
+        condence_file_graph(cg);
+        collapse_file_duplicates(cg);
+    }
 }

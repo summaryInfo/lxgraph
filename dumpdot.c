@@ -8,15 +8,7 @@
 
 #define MAX_WEIGHT 16
 
-void dump_dot(struct callgraph *cg, const char *destpath) {
-    FILE *dst = destpath ? fopen(destpath, "w") : stdout;
-    if (!dst) {
-        warn("Cannot open output file '%s'", destpath);
-        return;
-    }
-
-    debug("Writing graph to '%s'...", destpath ? destpath : "<stdout>");
-
+static void dump_dot_functions(struct callgraph *cg, FILE *dst) {
     fputs("digraph \"callgraph\" {\n", dst);
 
     // TODO Make more of these configurable
@@ -73,8 +65,52 @@ void dump_dot(struct callgraph *cg, const char *destpath) {
     }
 
     fputs("}\n", dst);
+}
+
+static void dump_dot_files(struct callgraph *cg, FILE *dst) {
+    fputs("digraph \"callgraph\" {\n", dst);
+
+    // TODO Make more of these configurable
+    fprintf(dst, "\tlayout = \"%s\";\n", "fdp");
+    fprintf(dst, "\tsmoothing = \"%s\";\n", "graph_dist");
+    fprintf(dst, "\tesep = \"+%u\";\n", 32);
+    fprintf(dst, "\toverlap = \"%s\";\n", "false");
+    fprintf(dst, "\tsplines = \"%s\";\n", "true");
+    fprintf(dst, "\toutputorder = \"%s\";\n", "edgesfirst");
+    fprintf(dst, "\tnode[shape=\"%s\" style=\"%s\" color=\"%s\"]\n", "box", "filled", "white");
+
+    /* Print functions for each file */
+    ht_iter_t itfile = ht_begin(&cg->files);
+    for (ht_head_t *cur; (cur = ht_next(&itfile)); ) {
+        struct file *file = container_of(cur, struct file, head);
+        if (list_is_empty(&file->functions)) continue;
+        fprintf(dst, "\t\tn%p[label=\"%s\"];\n", (void *)file, file->name);
+
+        list_iter_t itcall = list_begin(&file->calls);
+        for (list_head_t *curcall; (curcall = list_next(&itcall)); ) {
+            struct call *call = container_of(curcall, struct call, calls);
+            fprintf(dst, "\t\tn%p -> n%p[style = \"setlinewidth(%f)\"];\n",
+                    (void *)call->from_file, (void *)call->to_file, MIN(pow(call->weight, 0.6), MAX_WEIGHT));
+        }
+    }
+
+    fputs("}\n", dst);
+}
+
+void dump_dot(struct callgraph *cg, const char *destpath) {
+    FILE *dst = destpath ? fopen(destpath, "w") : stdout;
+    if (!dst) {
+        warn("Cannot open output file '%s'", destpath);
+        return;
+    }
+
+    debug("Writing graph to '%s'...", destpath ? destpath : "<stdout>");
+
+    if (config.level_of_details == lod_file) dump_dot_files(cg, dst);
+    else dump_dot_functions(cg, dst);
 
     debug("Done.");
 
     if (dst != stdout) fclose(dst);
 }
+

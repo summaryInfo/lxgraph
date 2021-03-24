@@ -13,6 +13,8 @@
 struct file {
     ht_head_t head;
     list_head_t functions;
+    list_head_t called;
+    list_head_t calls;
     const char *name;
 };
 
@@ -32,8 +34,16 @@ struct function {
 };
 
 struct call {
-    struct function *caller;
-    struct function *callee;
+    union {
+        struct {
+            struct function *caller;
+            struct function *callee;
+        };
+        struct {
+            struct file *from_file;
+            struct file *to_file;
+        };
+    };
     list_head_t called;
     list_head_t calls;
     int line;
@@ -68,6 +78,12 @@ inline static void erase_file(struct callgraph *cg, struct file *file) {
     list_iter_t it = list_begin(&file->functions);
     for (list_head_t *cur; (cur = list_next(&it)); )
         erase_function(cg, container_of(cur, struct function, in_file));
+    it = list_begin(&file->calls);
+    for (list_head_t *cur; (cur = list_next(&it)); )
+        erase_call(container_of(cur, struct call, calls));
+    it = list_begin(&file->called);
+    for (list_head_t *cur; (cur = list_next(&it)); )
+        erase_call(container_of(cur, struct call, called));
     ht_erase(&cg->files, &file->head);
     free(file);
 }

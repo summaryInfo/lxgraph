@@ -33,6 +33,8 @@ static struct file *add_file(struct callgraph *cg, const char *file) {
     new->name = (char *)(new + 1);
     new->head = dummy.head;
     list_init(&new->functions);
+    list_init(&new->calls);
+    list_init(&new->called);
 
     ht_insert_hint(&cg->files, h, &new->head);
     return new;
