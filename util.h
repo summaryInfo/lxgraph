@@ -30,11 +30,17 @@ struct array_option {
     char **data;
 };
 
+enum level_of_details {
+    lod_function,
+    lod_file,
+};
+
 struct config {
     char *config_path;
     char *output_path;
     char *build_dir;
     int32_t log_level;
+    int32_t level_of_details;
     int32_t nthreads;
     struct array_option exclude_files;
     struct array_option exclude_functions;
@@ -54,6 +60,7 @@ enum option {
     o_exclude_functions,
     o_root_files,
     o_root_functions,
+    o_lod,
     o_MAX
 };
 

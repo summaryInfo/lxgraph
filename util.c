@@ -28,6 +28,7 @@ static struct options {
     const char *desc;
 } options[o_MAX] = {
     [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-4)" },
+    [o_lod] = {"lod", "\t\t(Set level of details, [function]/file)"},
     [o_config] = {"config", ", -C<value>\t(Configuration file path)" },
     [o_out] = {"out", ", -o<value>\t(Output file path)"},
     [o_path] = {"path", ", -p<value>\t(Build directory path)"},
@@ -174,6 +175,27 @@ static void parse_str(char **dst, const char *str, const char *dflt) {
     *dst = res;
 }
 
+static bool parse_enum(const char *str, int64_t *val, int dflt, int start, ...) {
+    if (!strcasecmp(str, "default")) *val = dflt;
+    else {
+        va_list va;
+        va_start(va, start);
+        const char *s;
+        bool valset = 0;
+        while ((s = va_arg(va, const char *))) {
+            if (!strcasecmp(str, s)) {
+                *val = start;
+                valset = 1;
+                break;
+            }
+            start++;
+        }
+        va_end(va);
+        return valset;
+    }
+    return 1;
+}
+
 static void fini_array_option(struct array_option *current) {
     for (size_t i = 0; i < current->size; i++)
         free(current->data[i]);
@@ -209,6 +231,9 @@ bool set_option(const char *name, const char *value) {
             current = &config.exclude_functions;
         } else if (!strcmp(options[o_root_functions].name, name)) {
             current = &config.root_functions;
+        } else if (!strcmp(options[o_lod].name, name)) {
+            if (!parse_enum(value, &v, lod_function, lod_function, "function", "file", NULL)) goto e_value;
+            config.level_of_details = v;
         } else if (!strcmp(options[o_root_files].name, name)) {
             current = &config.root_files;
         } else current = NULL;
