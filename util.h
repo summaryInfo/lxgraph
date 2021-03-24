@@ -46,12 +46,16 @@ struct config {
     struct array_option exclude_functions;
     struct array_option root_files;
     struct array_option root_functions;
+    bool keep_inline;
+    bool keep_static;
 };
 
 extern struct config config;
 
 enum option {
     o_log_level,
+    o_inline,
+    o_static,
     o_config,
     o_out,
     o_path,

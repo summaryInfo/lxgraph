@@ -28,6 +28,8 @@ static struct options {
     const char *desc;
 } options[o_MAX] = {
     [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-4)" },
+    [o_inline] = {"inline", "\t(Keep inline functions)"},
+    [o_static] = {"static", "\t(Keep static functions)"},
     [o_lod] = {"lod", "\t\t(Set level of details, [function]/file)"},
     [o_config] = {"config", ", -C<value>\t(Configuration file path)" },
     [o_out] = {"out", ", -o<value>\t(Output file path)"},
@@ -136,7 +138,6 @@ bool ht_adjust(struct hashtable *ht, intptr_t inc) {
     return 1;
 }
 
-#if 0
 static bool parse_bool(const char *str, bool *val, bool dflt) {
     if (!strcasecmp(str, "default")) {
         *val = dflt;
@@ -150,7 +151,6 @@ static bool parse_bool(const char *str, bool *val, bool dflt) {
     }
     return 0;
 }
-#endif
 
 static bool parse_int(const char *str, int64_t *val, int64_t min, int64_t max, int64_t dflt) {
     if (!strcasecmp(str, "default")) *val = dflt;
@@ -208,12 +208,21 @@ bool set_option(const char *name, const char *value) {
     if (name) {
         if (value) debug("Setting option %s=\"%s\"", name, value);
         int64_t v;
+        bool bv;
         if (!strcmp(options[o_log_level].name, name)) {
             if (!parse_int(value, &v, 0, 4, 3)) goto e_value;
             config.log_level = v;
             return true;
         } else if (!strcmp(options[o_config].name, name)) {
             parse_str(&config.config_path, value, PROG_NAME".conf");
+            return true;
+        } else if (!strcmp(options[o_inline].name, name)) {
+            if (!parse_bool(value, &bv, 1)) goto e_value;
+            config.keep_inline = bv;
+            return true;
+        } else if (!strcmp(options[o_static].name, name)) {
+            if (!parse_bool(value, &bv, 1)) goto e_value;
+            config.keep_static = bv;
             return true;
         } else if (!strcmp(options[o_path].name, name)) {
             parse_str(&config.build_dir, value, ".");
@@ -225,15 +234,17 @@ bool set_option(const char *name, const char *value) {
             if (!parse_int(value, &v, 1, 32, 0)) goto e_value;
             config.nthreads = v;
             return true;
+        } else if (!strcmp(options[o_lod].name, name)) {
+            if (!parse_enum(value, &v, lod_function,
+                    lod_function, "function", "file", NULL)) goto e_value;
+            config.level_of_details = v;
+            return true;
         } else if (!strcmp(options[o_exclude_files].name, name)) {
             current = &config.exclude_files;
         } else if (!strcmp(options[o_exclude_functions].name, name)) {
             current = &config.exclude_functions;
         } else if (!strcmp(options[o_root_functions].name, name)) {
             current = &config.root_functions;
-        } else if (!strcmp(options[o_lod].name, name)) {
-            if (!parse_enum(value, &v, lod_function, lod_function, "function", "file", NULL)) goto e_value;
-            config.level_of_details = v;
         } else if (!strcmp(options[o_root_files].name, name)) {
             current = &config.root_files;
         } else current = NULL;
