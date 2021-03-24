@@ -228,12 +228,12 @@ void filter_graph(struct callgraph *cg) {
     clear_marks(cg);
     exclude_exceptions(cg);
     collapse_duplicates(cg);
-    remove_unused(cg);
 
     // TODO static
-    if (!config.keep_inline) {
+    if (!config.keep_inline)
         collapse_inline(cg);
-    }
+
+    remove_unused(cg);
 
     if (config.level_of_details == lod_file) {
         condence_file_graph(cg);

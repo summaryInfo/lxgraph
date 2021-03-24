@@ -234,6 +234,7 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         struct function *dfun = add_function_ref(dst, sfun->name);
         /* Collect missing information to dst */
         if (!dfun->is_definition && sfun->file) {
+            if (dfun->file) list_erase(&dfun->in_file);
             dfun->file = add_file(dst, sfun->file->name);
             list_append(&dfun->file->functions, &dfun->in_file);
             dfun->line = sfun->line;

@@ -28,8 +28,8 @@ static struct options {
     const char *desc;
 } options[o_MAX] = {
     [o_log_level] = {"log-level", ", -L<value>\t(Verbositiy of output, 0-4)" },
-    [o_inline] = {"inline", "\t(Keep inline functions)"},
-    [o_static] = {"static", "\t(Keep static functions)"},
+    [o_inline] = {"inline", "\t\t(Keep inline functions)"},
+    [o_static] = {"static", "\t\t(Keep static functions)"},
     [o_lod] = {"lod", "\t\t(Set level of details, [function]/file)"},
     [o_config] = {"config", ", -C<value>\t(Configuration file path)" },
     [o_out] = {"out", ", -o<value>\t(Output file path)"},
