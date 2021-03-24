@@ -65,7 +65,8 @@ static struct function *add_function(struct callgraph *cg, struct file *file, co
     ht_head_t **h = ht_lookup_ptr(&cg->functions, &dummy.head);
     if (*h) {
         struct function *fn = container_of(*h, struct function, head);
-        if (!fn->file) {
+        if (!fn->is_definition) {
+            if (fn->file) list_erase(&fn->in_file);
             list_append(&file->functions, &fn->in_file);
             fn->file = file;
             fn->line = line;
@@ -232,7 +233,7 @@ static void merge_move_callgraph(struct callgraph *dst, struct callgraph *src) {
         struct function *sfun = container_of(cur, struct function, head);
         struct function *dfun = add_function_ref(dst, sfun->name);
         /* Collect missing information to dst */
-        if (!dfun->file && sfun->file) {
+        if (!dfun->is_definition && sfun->file) {
             dfun->file = add_file(dst, sfun->file->name);
             list_append(&dfun->file->functions, &dfun->in_file);
             dfun->line = sfun->line;
