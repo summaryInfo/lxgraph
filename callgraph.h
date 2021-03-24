@@ -57,8 +57,10 @@ struct callgraph {
 };
 
 inline static void erase_call(struct call *call) {
-    list_erase(&call->called);
-    list_erase(&call->calls);
+    if (call->called.next)
+        list_erase(&call->called);
+    if (call->calls.next)
+        list_erase(&call->calls);
     free(call);
 }
 
@@ -106,5 +108,7 @@ struct callgraph *parse_directory(const char *path);
 void dump_dot(struct callgraph *cg, const char *destpath);
 void filter_graph(struct callgraph *cg);
 void clear_marks(struct callgraph *cg);
+void add_function_call(struct function *from, struct function *to, int line, int col);
+
 #endif
 

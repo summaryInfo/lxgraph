@@ -94,7 +94,7 @@ static struct function *add_function(struct callgraph *cg, struct file *file, co
     return new;
 }
 
-inline static void add_function_call(struct function *from, struct function *to, int line, int col) {
+void add_function_call(struct function *from, struct function *to, int line, int col) {
     struct call *new = malloc(sizeof *new);
     list_append(&from->calls, &new->calls);
     list_append(&to->called, &new->called);

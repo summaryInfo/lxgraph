@@ -197,11 +197,43 @@ static void condence_file_graph(struct callgraph *cg) {
     }
 }
 
+static void collapse_inline(struct callgraph *cg) {
+    debug("Collapsing inline functions...");
+    ht_iter_t it = ht_begin(&cg->functions);
+    for (ht_head_t *cur; (cur = ht_current(&it)); ) {
+        struct function *fun = container_of(cur, struct function, head);
+        if (!fun->is_inline) {
+            ht_next(&it);
+            continue;
+        }
+        list_iter_t itfrom = list_begin(&fun->called);
+        for (list_head_t *curfrom; (curfrom = list_erase_current(&itfrom)); ) {
+            struct call *from = container_of(curfrom, struct call, called);
+            if (from->caller != fun) {
+                list_iter_t itto = list_begin(&fun->calls);
+                for (list_head_t *curto; (curto = list_next(&itto)); ) {
+                    struct call *to = container_of(curfrom, struct call, called);
+                    if (to->callee == fun) continue;
+                    add_function_call(from->caller, to->callee, from->line, from->column);
+                }
+            }
+            erase_call(from);
+        }
+        ht_erase_current(&it);
+        erase_function(cg, fun);
+    }
+}
+
 void filter_graph(struct callgraph *cg) {
     clear_marks(cg);
     exclude_exceptions(cg);
     collapse_duplicates(cg);
     remove_unused(cg);
+
+    // TODO static
+    if (!config.keep_inline) {
+        collapse_inline(cg);
+    }
 
     if (config.level_of_details == lod_file) {
         condence_file_graph(cg);
