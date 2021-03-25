@@ -41,6 +41,16 @@ static void dfs(struct function *root) {
     }
 }
 
+static void reverse_dfs(struct function *root) {
+    if (root->mark) return;
+    root->mark = 1;
+    list_iter_t it = list_begin(&root->calls);
+    for (list_head_t *cur; (cur = list_next(&it)); ) {
+        struct call *edge = container_of(cur, struct call, calls);
+        reverse_dfs(edge->callee);
+    }
+}
+
 static void remove_unused(struct callgraph *cg) {
     /* Mark every function starting from roots */
 
@@ -61,6 +71,26 @@ static void remove_unused(struct callgraph *cg) {
         if (fun) {
             debug("Makring root '%s'", fun->name);
             dfs(fun);
+        }
+    }
+
+    for (size_t i = 0; i < config.reverse_root_files.size; i++) {
+        struct file *file = find_file(cg, config.reverse_root_files.data[i]);
+        if (file) {
+            list_iter_t it = list_begin(&file->functions);
+            for (list_head_t *cur; (cur = list_next(&it)); ) {
+                struct function *fun = container_of(cur, struct function, in_file);
+                debug("Makring reverse root '%s'", fun->name);
+                reverse_dfs(fun);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < config.reverse_root_functions.size; i++) {
+        struct function *fun = find_function(cg, config.reverse_root_functions.data[i]);
+        if (fun) {
+            debug("Makring reverse root '%s'", fun->name);
+            reverse_dfs(fun);
         }
     }
 

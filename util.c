@@ -39,6 +39,8 @@ static struct options {
     [o_exclude_functions] = {"exclude-functions", "\t\t(List of functions to exclude from the graph)"},
     [o_root_files] = {"root-files", "\t\t(List of files to mark as roots of the graph)"},
     [o_root_functions] = {"root-functions", "\t\t(List of functions to mark as roots of the graph)"},
+    [o_reverse_root_files] = {"reverse-root-files", "\t\t(List of files to mark as reverse_roots of the graph)"},
+    [o_reverse_root_functions] = {"reverse-root-functions", "\t\t(List of functions to mark as reverse_roots of the graph)"},
 };
 
 struct config config;
@@ -243,6 +245,10 @@ bool set_option(const char *name, const char *value) {
             current = &config.exclude_files;
         } else if (!strcmp(options[o_exclude_functions].name, name)) {
             current = &config.exclude_functions;
+        } else if (!strcmp(options[o_reverse_root_functions].name, name)) {
+            current = &config.reverse_root_functions;
+        } else if (!strcmp(options[o_reverse_root_files].name, name)) {
+            current = &config.reverse_root_files;
         } else if (!strcmp(options[o_root_functions].name, name)) {
             current = &config.root_functions;
         } else if (!strcmp(options[o_root_files].name, name)) {
@@ -555,6 +561,8 @@ void fini_config(void) {
     fini_array_option(&config.exclude_functions);
     fini_array_option(&config.root_files);
     fini_array_option(&config.root_functions);
+    fini_array_option(&config.reverse_root_files);
+    fini_array_option(&config.reverse_root_functions);
     free(config.config_path);
     free(config.output_path);
     free(config.build_dir);

@@ -46,6 +46,8 @@ struct config {
     struct array_option exclude_functions;
     struct array_option root_files;
     struct array_option root_functions;
+    struct array_option reverse_root_files;
+    struct array_option reverse_root_functions;
     bool keep_inline;
     bool keep_static;
 };
@@ -64,6 +66,8 @@ enum option {
     o_exclude_functions,
     o_root_files,
     o_root_functions,
+    o_reverse_root_files,
+    o_reverse_root_functions,
     o_lod,
     o_MAX
 };
