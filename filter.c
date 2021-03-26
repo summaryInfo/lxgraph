@@ -227,12 +227,12 @@ static void condence_file_graph(struct callgraph *cg) {
     }
 }
 
-static void collapse_inline(struct callgraph *cg) {
-    debug("Collapsing inline functions...");
+static void collapse_inline(struct callgraph *cg, bool keep_inline, bool keep_static) {
+    debug("Collapsing inline/static functions...");
     ht_iter_t it = ht_begin(&cg->functions);
     for (ht_head_t *cur; (cur = ht_current(&it)); ) {
         struct function *fun = container_of(cur, struct function, head);
-        if (!fun->is_inline) {
+        if (((keep_inline || !fun->is_inline) && (keep_static || fun->is_extern))) {
             ht_next(&it);
             continue;
         }
@@ -259,9 +259,8 @@ void filter_graph(struct callgraph *cg) {
     exclude_exceptions(cg);
     collapse_duplicates(cg);
 
-    // TODO static
-    if (!config.keep_inline)
-        collapse_inline(cg);
+    if (!config.keep_inline || !config.keep_static)
+        collapse_inline(cg, config.keep_inline, config.keep_static);
 
     remove_unused(cg);
 
